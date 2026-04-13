@@ -104,19 +104,85 @@ env var > `.local_splitter/config.yaml` > `./config.yaml`.
 
 ## Usage
 
-### As an OpenAI-compatible proxy
+Start the proxy, then point your agent at it. The proxy speaks both the
+**OpenAI** and **Anthropic** API formats, so any agent works transparently.
 
 ```sh
 uv run local-splitter serve-http --config config.yaml
-export OPENAI_API_BASE=http://127.0.0.1:7788/v1
-# Your agent now routes through local-splitter transparently.
 ```
 
-The proxy adds a `splitter` key to every response with observability data:
+### Claude Code
+
+```sh
+ANTHROPIC_BASE_URL=http://127.0.0.1:7788 claude
+```
+
+### Cursor / Continue / any OpenAI-compatible agent
+
+Set in the agent's settings:
+
+```
+API Base: http://127.0.0.1:7788/v1
+API Key:  <your real cloud key>
+Model:    gpt-4o-mini
+```
+
+Or via environment:
+
+```sh
+export OPENAI_API_BASE=http://127.0.0.1:7788/v1
+export OPENAI_API_KEY=your-key
+```
+
+### Codex CLI
+
+```sh
+OPENAI_API_BASE=http://127.0.0.1:7788/v1 codex
+```
+
+### As an MCP server
+
+For agents that speak MCP natively (Claude Code, Cursor-via-MCP):
+
+```sh
+uv run local-splitter serve-mcp --config config.yaml
+```
+
+Register with Claude Code by adding to your MCP config:
 
 ```json
 {
-  "choices": [{ "message": { "content": "..." } }],
+  "mcpServers": {
+    "local-splitter": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/local-splitter",
+               "local-splitter", "serve-mcp", "--config", "config.yaml"]
+    }
+  }
+}
+```
+
+Exposed MCP tools:
+- `split.complete` — run a request through the full pipeline
+- `split.classify` — run T1 classifier only (no answer)
+- `split.cache_lookup` — check T3 cache without writing
+- `split.stats` — aggregate metrics since startup
+- `split.config` — read-only config view
+
+### API surfaces
+
+| Endpoint | Format | Streaming |
+|----------|--------|-----------|
+| `POST /v1/chat/completions` | OpenAI | SSE (`stream: true`) |
+| `POST /v1/messages` | Anthropic | SSE (`stream: true`) |
+| `GET /v1/models` | OpenAI | — |
+| `GET /v1/splitter/stats` | JSON | — |
+| `GET /healthz` | JSON | — |
+
+Both surfaces add a `splitter` key to responses with observability data:
+
+```json
+{
   "splitter": {
     "served_by": "local",
     "latency_ms": 42.3,
@@ -129,25 +195,12 @@ The proxy adds a `splitter` key to every response with observability data:
 }
 ```
 
-### As an MCP server
-
-```sh
-uv run local-splitter serve-mcp --config config.yaml
-```
-
-Exposed MCP tools:
-- `split.complete` — run a request through the full pipeline
-- `split.classify` — run T1 classifier only (no answer)
-- `split.cache_lookup` — check T3 cache without writing
-- `split.stats` — aggregate metrics since startup
-- `split.config` — read-only config view
-
 ### Force routing
 
 Override the pipeline per-request:
 
 ```python
-# Via HTTP extra_body
+# Via HTTP extra_body (OpenAI surface)
 {"extra_body": {"splitter": {"force_local": True}}}   # bypass pipeline, use local
 {"extra_body": {"splitter": {"force_cloud": True}}}   # bypass pipeline, use cloud
 
@@ -187,12 +240,18 @@ uv run local-splitter eval \
 
 # Full eval script (produces paper-ready summary)
 uv run python evals/run_eval.py
+
+# Run specific subsets only
+uv run python evals/run_eval.py T5_only T6_only T7_only
+
+# Include judge-model quality evaluation (pairwise A/B comparison)
+uv run python evals/run_eval.py --quality
 ```
 
 Results land in `.local_splitter/eval/`:
 - `results.csv` — one row per (workload × tactic subset)
 - `runs.jsonl` — per-sample detail log
-- `summary.json` — aggregates for the paper
+- `summary.json` — aggregates for the paper (includes quality verdicts with `--quality`)
 
 ### Available tactic subsets
 
@@ -228,6 +287,7 @@ src/local_splitter/
     ├── types.py            #   WorkloadSample, SampleResult, RunResult
     ├── runner.py           #   Matrix runner + tactic subsets
     ├── metrics.py          #   Token savings, cost, routing accuracy
+    ├── quality.py          #   Judge-model pairwise quality evaluation
     └── report.py           #   CSV + markdown export
 
 evals/workloads/            # Evaluation datasets (JSONL)
@@ -290,12 +350,13 @@ MIT
 
 ## Status
 
-- [x] Python scaffold (uv, package skeleton, 171 tests)
+- [x] Python scaffold (uv, package skeleton, 175 tests)
 - [x] Model backends (Ollama + OpenAI-compatible)
-- [x] Transport layer (MCP stdio + OpenAI-compat HTTP proxy)
+- [x] Transport layer (MCP stdio + HTTP proxy: OpenAI + Anthropic)
+- [x] Streaming support (SSE, both API surfaces)
 - [x] All seven tactics implemented and tested
-- [x] Evaluation harness (runner, metrics, CSV/markdown report)
+- [x] Evaluation harness (runner, metrics, quality judge, CSV/markdown)
 - [x] CLI eval command + seed workloads (4 classes, 40 samples)
 - [x] Evaluation with real numbers (Ollama llama3.2:3b + gemma3)
-- [x] Paper with results (tables, findings, recommendations)
+- [x] Paper with results (tables, figures, quality evaluation)
 - [ ] arXiv submission
