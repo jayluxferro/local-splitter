@@ -1,21 +1,23 @@
-"""OpenAI-compatible HTTP proxy in front of the pipeline.
+"""Multi-API HTTP proxy in front of the pipeline.
 
-An agent that can be pointed at a custom `OPENAI_API_BASE` can use this
-transport transparently:
+Supports both API surfaces so any agent can use local-splitter as a
+drop-in replacement:
 
+    # OpenAI-compatible agents (Cursor, Codex CLI, etc.)
     export OPENAI_API_BASE=http://127.0.0.1:7788/v1
-    export OPENAI_API_KEY=unused
+
+    # Anthropic-compatible agents (Claude Code, etc.)
+    export ANTHROPIC_BASE_URL=http://127.0.0.1:7788
 
 Endpoints
 ---------
-- `POST /v1/chat/completions`: streaming (SSE) and non-streaming.
-  Tactics run on the request before streaming begins; T4 (draft-review)
-  is skipped in streaming mode.
+- `POST /v1/chat/completions`: OpenAI format, streaming + non-streaming.
+- `POST /v1/messages`: Anthropic format, streaming + non-streaming.
 - `GET  /v1/models`: returns the configured local + cloud models.
 - `GET  /v1/splitter/stats`: returns aggregate pipeline metrics.
 
 The `splitter` key on responses is the extension that tactics use to
-report what happened. Standard OpenAI clients ignore unknown keys.
+report what happened. Standard clients ignore unknown keys.
 """
 
 from __future__ import annotations
@@ -135,6 +137,53 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
     async def splitter_stats() -> dict[str, Any]:
         return asdict(pipeline.stats())
 
+    # ------------------------------------------------------------------ #
+    #  Anthropic-compatible surface: POST /v1/messages                    #
+    # ------------------------------------------------------------------ #
+
+    @app.post("/v1/messages")
+    async def anthropic_messages(request: Request):
+        try:
+            body = await request.json()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}") from e
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+
+        messages = _anthropic_to_pipeline_messages(body)
+        if not messages:
+            raise HTTPException(status_code=400, detail="messages must be non-empty")
+
+        pipeline_req = PipelineRequest(
+            messages=messages,
+            model_hint="auto",
+            temperature=body.get("temperature"),
+            max_tokens=body.get("max_tokens"),
+            stop=body.get("stop_sequences"),
+            stream=bool(body.get("stream")),
+            meta={"model_requested": body.get("model")},
+        )
+
+        if pipeline_req.stream:
+            return StreamingResponse(
+                _anthropic_sse_generator(pipeline, pipeline_req, body.get("model")),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        try:
+            pr = await pipeline.complete(pipeline_req)
+        except PipelineError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ModelBackendError as e:
+            _log.warning("backend error serving /v1/messages: %s", e)
+            raise HTTPException(status_code=502, detail=f"backend error: {e}") from e
+
+        return JSONResponse(_pipeline_to_anthropic(pr, request_model=body.get("model")))
+
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
@@ -215,6 +264,146 @@ def _pipeline_to_openai(pr, *, request_model: str | None) -> dict[str, Any]:
             },
         },
     }
+
+
+# ---------------------------------------------------------------------- #
+#  Anthropic format helpers                                               #
+# ---------------------------------------------------------------------- #
+
+
+def _extract_text(content: Any) -> str:
+    """Extract plain text from Anthropic content (string or block array)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts)
+    return str(content)
+
+
+def _anthropic_to_pipeline_messages(body: dict[str, Any]) -> list[dict[str, str]]:
+    """Convert Anthropic request body to pipeline message list."""
+    messages: list[dict[str, str]] = []
+
+    # Anthropic puts system as a top-level param, not in messages.
+    system = body.get("system")
+    if system:
+        messages.append({"role": "system", "content": _extract_text(system)})
+
+    for msg in body.get("messages", []):
+        role = msg.get("role", "user")
+        content = _extract_text(msg.get("content", ""))
+        messages.append({"role": role, "content": content})
+
+    return messages
+
+
+_STOP_REASON_MAP: dict[str, str] = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "error": "end_turn",
+    "unknown": "end_turn",
+}
+
+
+def _pipeline_to_anthropic(pr, *, request_model: str | None) -> dict[str, Any]:
+    """Translate a PipelineResponse into an Anthropic Messages response."""
+    input_tokens = pr.usage_cloud.input_tokens or 0
+    output_tokens = pr.usage_cloud.output_tokens or 0
+
+    return {
+        "id": f"msg_{uuid.uuid4().hex}",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": pr.content}],
+        "model": pr.model or request_model or "",
+        "stop_reason": _STOP_REASON_MAP.get(pr.finish_reason, "end_turn"),
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
+        "splitter": {
+            "served_by": pr.served_by,
+            "latency_ms": round(pr.latency_ms, 3),
+            "pipeline_trace": [e.as_dict() for e in pr.trace],
+            "tokens_local": {
+                "input": pr.usage_local.input_tokens or 0,
+                "output": pr.usage_local.output_tokens or 0,
+            },
+        },
+    }
+
+
+async def _anthropic_sse_generator(
+    pipeline: Pipeline, req: PipelineRequest, request_model: str | None
+):
+    """Yield Anthropic-format SSE events from the pipeline's stream."""
+    msg_id = f"msg_{uuid.uuid4().hex}"
+    model = request_model or ""
+
+    # message_start
+    start_msg = {
+        "id": msg_id, "type": "message", "role": "assistant",
+        "content": [], "model": model, "stop_reason": None,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+    yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': start_msg})}\n\n"
+
+    # content_block_start
+    yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+
+    total_output = 0
+    try:
+        async for chunk in pipeline.stream(req):
+            if chunk.delta:
+                total_output += len(chunk.delta.split())  # rough token estimate
+                delta_event = {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": chunk.delta},
+                }
+                yield f"event: content_block_delta\ndata: {json.dumps(delta_event)}\n\n"
+
+            if chunk.done:
+                stop_reason = _STOP_REASON_MAP.get(
+                    chunk.finish_reason or "stop", "end_turn"
+                )
+                output_tokens = (
+                    chunk.usage.output_tokens if chunk.usage else total_output
+                )
+
+                # content_block_stop
+                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+
+                # message_delta
+                msg_delta = {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason},
+                    "usage": {"output_tokens": output_tokens},
+                }
+                yield f"event: message_delta\ndata: {json.dumps(msg_delta)}\n\n"
+
+                # message_stop
+                yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+                return
+
+    except (PipelineError, ModelBackendError) as e:
+        _log.warning("anthropic streaming error: %s", e)
+        error_event = {
+            "type": "error",
+            "error": {"type": "api_error", "message": str(e)},
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+
+    # If no done chunk was received, close the stream gracefully.
+    yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+    yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': total_output}})}\n\n"
+    yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
 
 __all__ = ["create_app"]

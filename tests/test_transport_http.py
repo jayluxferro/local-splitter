@@ -210,6 +210,91 @@ def test_backend_error_translates_to_502() -> None:
     assert "backend" in r.json()["detail"].lower()
 
 
+# ------------------------------------------------------------------ #
+#  Anthropic /v1/messages surface                                       #
+# ------------------------------------------------------------------ #
+
+
+def test_anthropic_messages_non_streaming() -> None:
+    client, cloud, _ = _client()
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 1024,
+            "system": "You are helpful.",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["type"] == "message"
+    assert data["role"] == "assistant"
+    assert data["content"][0]["type"] == "text"
+    assert data["content"][0]["text"] == "hello from cloud"
+    assert data["stop_reason"] == "end_turn"
+    assert data["usage"]["input_tokens"] == 42
+    assert data["usage"]["output_tokens"] == 7
+    # Pipeline received system + user message
+    assert len(cloud.calls) == 1
+    msgs = cloud.calls[0]["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[1]["role"] == "user"
+
+
+def test_anthropic_messages_streaming() -> None:
+    client, _, _ = _client()
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": True,
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    text = r.text
+    assert "message_start" in text
+    assert "content_block_delta" in text
+    assert "message_stop" in text
+
+
+def test_anthropic_messages_content_blocks() -> None:
+    """Anthropic content can be an array of blocks."""
+    client, cloud, _ = _client()
+    r = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-3-5-sonnet",
+            "max_tokens": 1024,
+            "system": [{"type": "text", "text": "Be helpful."}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Part 1."},
+                        {"type": "text", "text": "Part 2."},
+                    ],
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200
+    msgs = cloud.calls[0]["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "Be helpful."
+    assert "Part 1." in msgs[1]["content"]
+    assert "Part 2." in msgs[1]["content"]
+
+
+def test_anthropic_messages_empty_body_rejected() -> None:
+    client, _, _ = _client()
+    r = client.post("/v1/messages", json={"model": "x", "max_tokens": 1})
+    assert r.status_code == 400
+
+
 def test_force_local_without_local_backend_returns_400() -> None:
     cloud = FakeChatClient()
     cfg = _config(local=False)
