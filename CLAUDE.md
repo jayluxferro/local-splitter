@@ -1,1 +1,0 @@
-../resilient-write/CLAUDE.md

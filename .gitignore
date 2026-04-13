@@ -53,5 +53,16 @@ paper/*.synctex.gz
 paper/*.fls
 paper/*.fdb_latexmk
 
+# Local config (use config.example.yaml as template)
+config.yaml
+
+# Agent / tooling state
+.resilient_write/
+CLAUDE.md
+FIRST_INSTRUCTION.md
+.agent/memory/user-profile.md
+.agent/memory/next-steps.md
+.agent/memory/MEMORY.md
+
 # Misc
 git-push
