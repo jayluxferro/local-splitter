@@ -28,16 +28,16 @@ models:
     # store the value directly in the config file.
     api_key_env: OPENAI_API_KEY
 
-# Stage 3 (current) ignores these — they're read but the pipeline runs
-# a pure cloud passthrough. Stage 4+ turns them on.
+# Recommended: T1 + T2 (45-79% cloud token savings).
+# See configs/ for other presets (conservative, max-savings, rag-heavy).
 pipeline:
-  t1_route:      { enabled: false, trivial_threshold: 0.8 }
-  t2_compress:   { enabled: false, max_tokens: 4000, ratio_target: 0.5 }
+  t1_route:      { enabled: true, trivial_threshold: 0.8 }
+  t2_compress:   { enabled: true, ratio_target: 0.5 }
   t3_sem_cache:  { enabled: false, similarity_threshold: 0.92, ttl: 86400 }
   t4_draft:      { enabled: false }
   t5_diff:       { enabled: false }
   t6_intent:     { enabled: false }
-  t7_batch:      { enabled: false, window_ms: 250, max_size: 8 }
+  t7_batch:      { enabled: false }
 
 evaluation:
   log_file: .local_splitter/runs.jsonl

@@ -72,31 +72,22 @@ unchanged.
 
 ## Configuration
 
-```yaml
-version: 1
+Pick a preset based on your workload:
 
-models:
-  local:
-    backend: ollama
-    endpoint: http://127.0.0.1:11434
-    chat_model: llama3.2:3b
-    embed_model: nomic-embed-text    # for T3 semantic cache
-    num_ctx: 8192
+| Preset | Tactics | Savings | Use case |
+|--------|---------|---------|----------|
+| [`conservative`](configs/conservative.yaml) | T1 | 29-69% | Safest — only routes trivials locally |
+| [`recommended`](configs/recommended.yaml) | T1+T2 | 45-79% | **Best default** — route + compress |
+| [`max-savings`](configs/max-savings.yaml) | T1+T2+T3 | 43-80% | Adds caching — best for repetitive workloads |
+| [`rag-heavy`](configs/rag-heavy.yaml) | T1+T2+T3+T4+T5 | 51% on RAG | Long-context workloads with retrieved chunks |
+| [`local-only-mcp`](configs/local-only-mcp.yaml) | T1+T2+T3+T5 | varies | MCP mode — agent is the cloud model |
 
-  cloud:
-    backend: openai_compat
-    endpoint: https://api.openai.com/v1
-    chat_model: gpt-4o-mini
-    api_key_env: OPENAI_API_KEY      # read from env, never stored
+```sh
+# Copy a preset
+cp configs/recommended.yaml config.yaml
 
-pipeline:
-  t1_route:    { enabled: true, trivial_threshold: 0.8 }
-  t2_compress: { enabled: true, ratio_target: 0.5 }
-  t3_sem_cache: { enabled: true, similarity_threshold: 0.92, ttl: 86400 }
-  t4_draft:    { enabled: false }
-  t5_diff:     { enabled: false }
-  t6_intent:   { enabled: false }
-  t7_batch:    { enabled: false }
+# Edit: set your cloud endpoint + API key env var
+vim config.yaml
 ```
 
 Config resolution order: explicit `--config` flag > `$LOCAL_SPLITTER_CONFIG`
