@@ -49,6 +49,9 @@ EVAL_SUBSETS = {
     "T4_only": TacticsConfig(t4_draft=True),
     "T1_T3": TacticsConfig(t1_route=True, t3_sem_cache=True),
     "T1_T2": TacticsConfig(t1_route=True, t2_compress=True),
+    "T5_only": TacticsConfig(t5_diff=True),
+    "T6_only": TacticsConfig(t6_intent=True),
+    "T7_only": TacticsConfig(t7_batch=True),
     "T1_T2_T3": TacticsConfig(t1_route=True, t2_compress=True, t3_sem_cache=True),
     "all": TacticsConfig(
         t1_route=True, t2_compress=True, t3_sem_cache=True,
@@ -58,6 +61,19 @@ EVAL_SUBSETS = {
 
 
 async def main() -> None:
+    # CLI: pass subset names as args to run only those (+ baseline).
+    # e.g.: uv run python evals/run_eval.py T5_only T6_only T7_only
+    requested = set(sys.argv[1:]) if len(sys.argv) > 1 else None
+    if requested:
+        subsets = {"baseline": EVAL_SUBSETS["baseline"]}
+        for name in requested:
+            if name not in EVAL_SUBSETS:
+                print(f"ERROR: unknown subset '{name}'. Available: {list(EVAL_SUBSETS)}")
+                return
+            subsets[name] = EVAL_SUBSETS[name]
+    else:
+        subsets = EVAL_SUBSETS
+
     # Use eval-specific config (Ollama for both backends to avoid SSL issues).
     config_path = Path("evals/config_eval.yaml")
     if not config_path.exists():
@@ -97,7 +113,7 @@ async def main() -> None:
                 cloud=cloud,
                 local=local,
                 base_config=config,
-                subsets=EVAL_SUBSETS,
+                subsets=subsets,
                 log_path=log_path,
                 cache_store=cache_store,
             )

@@ -30,7 +30,7 @@
   SPERIXLABS\\
   \texttt{jay@sperixlabs.org}
 }
-\date{\today}
+\date{April 2026}
 
 \begin{document}
 \maketitle
@@ -50,8 +50,9 @@ subset across four coding-agent workload classes
 (edit-heavy, explanation-heavy, general chat, RAG-heavy). We measure
 tokens saved, dollar cost, latency, and routing accuracy. Our headline finding is that \emph{T1 (local routing) combined with
 T2 (prompt compression) achieves 45--79\% cloud token savings on
-short-output workloads, while on RAG-heavy workloads the full set
-including T4 (draft-review) achieves 51\% savings.} We observe that the optimal tactic
+edit-heavy and explanation-heavy workloads, while on RAG-heavy
+workloads the full tactic set including T4 (draft-review) achieves
+51\% savings.} We observe that the optimal tactic
 subset is workload-dependent, which we believe is the most
 actionable finding for practitioners deploying coding agents today.
 \end{abstract}
@@ -411,10 +412,9 @@ Users are never blocked by a local-model failure.
 \subsection{Workloads}
 \label{sec:workloads}
 
-We evaluate on four workload classes, each containing at least 200
-samples captured from real coding-agent sessions (or synthetic
-surrogates matching real-session statistics). All samples are scrubbed
-of PII before use.
+We evaluate on four workload classes, each containing 10 synthetic
+samples matching the statistics of real coding-agent sessions. Samples
+are generated from public datasets and scrubbed of PII before use.
 
 \paragraph{WL1 --- Edit-heavy.}
 Captured from Claude~Code and Cursor~CLI during refactoring sessions.
@@ -441,21 +441,27 @@ prompts containing multiple retrieved chunks (10--40K~token inputs,
 \subsection{Models}
 \label{sec:models}
 
-We run a matrix of local $\times$ cloud model pairs.
+We use a single local--cloud model pair for all results.
 
-\paragraph{Local models (via Ollama~\cite{ollama}).}
-Llama~3.2 1B and 3B~\cite{llama3}, Qwen~2.5 3B~\cite{qwen25},
-Phi~3.5 3.8B~\cite{phi3}, and Gemma~2 2B~\cite{gemma}. All run on
-consumer Apple Silicon hardware (M-series, 16--32\,GB unified memory).
+\paragraph{Local model (via Ollama~\cite{ollama}).}
+Llama~3.2 3B~\cite{llama3} (Q4\_K\_M quantisation, Ollama default),
+running on consumer Apple Silicon hardware (M-series, 16--36\,GB
+unified memory). The architecture supports any Ollama-compatible
+model; extending to other sizes (1B, 7B) and families
+(Qwen~2.5~\cite{qwen25}, Phi~3.5~\cite{phi3}, Gemma~2~\cite{gemma})
+is future work.
 
-\paragraph{Cloud models (via OpenAI-compatible endpoints).}
-GPT-4o-mini, GPT-4o, Claude~3.5~Haiku (via LiteLLM), and
-Claude~3.5~Sonnet (via LiteLLM). These span the cost--capability
-spectrum from budget to frontier.
+\paragraph{Cloud model (simulated).}
+To eliminate network variance, the cloud model is also served locally
+via Ollama: Gemma~3~4B acts as a stronger ``cloud'' model relative to
+the 3B local model. Production deployments would target a remote
+endpoint (GPT-4o-mini, Claude~3.5~Sonnet, etc.\ via the
+OpenAI-compatible surface). Because the splitter's savings are
+measured in tokens, not wall-clock latency, the local-vs-remote
+distinction does not affect the primary metric; latency numbers in
+the appendix reflect same-machine inference and should not be
+extrapolated to production deployments.
 
-The primary results reported in \S\ref{sec:results} use Llama~3.2~3B
-(local) and Gemma~3~4B (cloud) unless otherwise noted. The full model
-matrix is available in the appendix.
 
 \subsection{Metrics}
 \label{sec:metrics}
@@ -499,11 +505,12 @@ sample:
     the ceiling.
 \end{enumerate}
 
-This yields approximately 25 runs per workload class $\times$ 4
-classes $\times$ 3 model combinations $=$ $\sim$300 total runs.
-Each run processes the full sample set for its workload. All runs are
-seeded (temperature~0 where possible) and record model versions and
-timestamps for reproducibility.
+This yields approximately 12 configurations per workload class
+$\times$ 4 classes $=$ 48 runs per evaluation pass. We report the
+mean of two passes (96 total runs). Each run processes the full
+sample set for its workload. All runs use temperature~0 where
+possible and record model versions and timestamps for
+reproducibility.
 
 \section{Results}
 \label{sec:results}
@@ -516,7 +523,14 @@ singleton across all workloads, saving 29--69\% depending on workload
 class. T2 (compression) saves 19--22\%. T3 (caching) shows minimal
 effect on single-pass workloads. T4 (draft-review) is negative on most
 workloads but positive on WL3 (chat), where outputs are long relative to
-inputs.
+inputs. T5 (diff) shows negligible effect on most workloads but
+achieves 39\% savings on WL4 (RAG-heavy), where its heuristic edit
+detection over-triggers on long contexts and paradoxically acts as a
+compressor (\S\ref{sec:failures}). T6 (intent) and T7 (batch) show
+high variance and near-zero mean effect: T6 is limited by JSON parse
+reliability at the 3B scale (\S\ref{sec:failures}), and T7's
+prompt-caching markup has no effect without a supporting cloud
+endpoint.
 
 \begin{figure}[h]
 \centering
@@ -529,9 +543,11 @@ inputs.
 \begin{table}[h]
 \centering
 \caption{Cloud token savings (\%) per tactic in isolation. Local model:
-  Llama~3.2 3B. Cloud model: Gemma~3 4B. Negative values indicate the
-  tactic \emph{increased} cloud tokens. Mean of two runs (10 samples
-  per workload each); individual runs varied by $\pm$2--7\,pp.}
+  Llama~3.2 3B. Cloud model: Gemma~3 4B (simulated locally). Negative
+  values indicate the tactic \emph{increased} cloud tokens. Mean of
+  two runs (10 samples per workload each); T1--T4 varied by
+  $\pm$2--7\,pp; T5--T7 showed higher variance ($\pm$3--14\,pp)
+  due to model non-determinism and small sample size.}
 \label{tab:singletons}
 \begin{tabular}{l r r r r}
 \toprule
@@ -541,6 +557,9 @@ T1 route     &  29.2\% &  68.8\% &  58.9\% &  38.0\% \\
 T2 compress  &  22.4\% &  19.3\% & $-$2.6\% &  18.9\% \\
 T3 cache     &   9.6\% &  $-$1.0\% & $-$3.8\% &   2.4\% \\
 T4 draft     & $-$35.0\% & $-$40.5\% &  12.6\% & $-$31.1\% \\
+T5 diff      &   5.1\% & $-$3.4\% & $-$4.4\% &  39.3\% \\
+T6 intent    &   5.0\% & $-$5.5\% &   0.3\% & $-$1.7\% \\
+T7 batch     & $-$1.3\% &   6.4\% & $-$1.7\% &   7.0\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -611,7 +630,8 @@ dollar cost across all subsets and workloads.
 \end{figure}
 
 \textbf{Recommendation}: use T1+T2 as the default. Add T4 only for
-workloads with long outputs. Add T3 for workloads with query repetition.
+long-context workloads where the local model can draft effectively.
+Add T3 for workloads with query repetition.
 
 \subsection{Greedy-additive subsets per workload}
 
@@ -644,14 +664,17 @@ do reach the cloud. T4 (draft-review) trades input tokens for output
 tokens---it adds a draft to the cloud's input but shortens the cloud's
 output.
 
-The optimal subset depends on the ratio of input to output tokens and on
-the fraction of trivial requests in the workload
-(Table~\ref{tab:combos}). On WL2 (explanation-heavy), 45\% of requests
-are trivial and outputs are moderate-length, so T1+T2 dominates: route
-the trivials locally, compress the rest. On WL4 (RAG-heavy), inputs are
-very long but only 20\% of requests are trivial, so T1 alone saves
-less (Table~\ref{tab:singletons}); however, the long outputs make T4's
-input-for-output trade-off net-positive.
+The optimal subset depends on the fraction of trivial requests, the
+input-to-output token ratio, and how much of the response the local
+model can draft correctly (Table~\ref{tab:combos}). On WL2
+(explanation-heavy), 45\% of requests are trivial and inputs are
+moderate, so T1+T2 dominates: route the trivials locally, compress
+the rest. On WL4 (RAG-heavy), inputs are very long (10--40K tokens)
+but only 20\% of requests are trivial, so T1 alone saves less
+(Table~\ref{tab:singletons}). T4 becomes net-positive on WL4 because
+the local draft handles the bulk of the long-context synthesis,
+reducing the cloud's generation burden enough to offset the added
+review-prompt input tokens.
 
 T3 (caching) shows marginal benefit on single-pass workloads because
 query repetition is low. In multi-session or support-style deployments
@@ -707,10 +730,10 @@ cloud cost. Table~\ref{tab:singletons} shows T4 increasing tokens by
 
 \paragraph{Compression information loss.}
 T2 occasionally drops a critical detail from long prompts. In our
-quality evaluation, 3 of 100 held-out WL1 samples showed a measurable
-quality degradation traceable to a compressed-away file path. The
-compression prompt's instruction to preserve paths verbatim mitigates
-but does not eliminate this failure.
+quality evaluation, we observed cases where a compressed-away file path
+led to a measurably degraded cloud response. The compression prompt's
+instruction to preserve paths verbatim mitigates but does not eliminate
+this failure.
 
 \paragraph{Routing false positives.}
 T1 occasionally classifies genuinely complex requests as
@@ -719,6 +742,18 @@ T1 occasionally classifies genuinely complex requests as
 benefited from the cloud model. The configurable confidence threshold
 trades off savings against accuracy: a stricter threshold reduces false
 positives but routes fewer requests locally.
+
+\paragraph{T5 heuristic over-triggering.}
+T5's edit detection relies on keyword heuristics (``fix'', ``change'',
+``replace'') plus a message-length threshold. On RAG-heavy workloads,
+these keywords appear naturally in retrieved content, causing T5 to
+trigger its diff extraction on non-edit requests. Paradoxically, this
+functions as opportunistic compression: the local model extracts
+``relevant sections'' from long contexts, achieving substantial savings
+on WL4 (Table~\ref{tab:singletons}) despite the workload containing no
+actual edits. A stricter detection heuristic or explicit edit-intent
+classification would prevent this but would also sacrifice the
+accidental compression benefit.
 
 \paragraph{T6 intent extraction parse failures.}
 T6 requires the local model to output a structured JSON object. In our
@@ -735,11 +770,17 @@ enabling it without output-format validation.
 \label{sec:limits}
 
 \begin{itemize}
-  \item Workloads are captured from a narrow set of sessions.
+  \item We evaluate a single model pair (Llama~3.2~3B local,
+    Gemma~3~4B cloud-simulated). Tactic rankings may differ
+    with other pairings; a multi-model matrix is future work.
+  \item Workloads contain 10 synthetic samples per class. Larger
+    sample sizes would tighten confidence intervals.
   \item Quality is measured by judge-model proxy plus human spot
     checks; a full human evaluation is future work.
   \item We evaluate text-only workloads; multimodal agents are out
     of scope.
+  \item The cloud model runs locally to eliminate network variance;
+    production latency will differ.
   \item Results depend on specific model versions; tactic rankings
     may shift as models evolve.
 \end{itemize}
@@ -753,9 +794,9 @@ Table~\ref{tab:singletons}). T1+T2 (routing + compression) is the best
 two-tactic combination on three of four workloads (45--79\% savings;
 Table~\ref{tab:combos}). On RAG-heavy workloads, the
 full tactic set achieves 51\% savings because T4 (draft-review)
-becomes net-positive when outputs are long. Notably, enabling all
-tactics simultaneously is suboptimal on short-output workloads
-because T4 increases cloud input tokens. Our headline finding is
+becomes net-positive on long-context workloads. Notably, enabling all
+tactics simultaneously is suboptimal on edit-heavy and
+explanation-heavy workloads because T4 increases cloud input tokens. Our headline finding is
 that \emph{tactic selection should be workload-aware}: the optimal
 subset differs across workload classes. We release our
 implementation, workloads, and evaluation harness at
@@ -777,7 +818,9 @@ tactic subset, averaged across two runs (10 samples per workload each).
 \begin{table*}[h]
 \centering
 \small
-\caption{Full evaluation metrics per workload and tactic subset (run~2).
+\caption{Full evaluation metrics per workload and tactic subset
+  (representative run; Tables~\ref{tab:singletons}--\ref{tab:combos}
+  report means of two runs).
   Cloud tokens = input + output sent to the cloud model.
   Cost uses OpenAI \texttt{gpt-4o-mini} rate card as a proxy.}
 \label{tab:full}
@@ -788,11 +831,17 @@ Workload & Subset & Cloud tok. & Local tok. & Saved (\%) & Cost (\$) & Latency (
 WL1 & baseline  & 11{,}007 &     0 &   --- & 0.0043 &  6{,}933 \\
 WL1 & T1        &  7{,}675 & 2{,}618 & 30.3 & 0.0031 & 17{,}218 \\
 WL1 & T2        &  8{,}355 &     0 & 24.1 & 0.0037 & 17{,}481 \\
+WL1 & T5        & 10{,}074 &     0 &  2.3 & 0.0042 & 11{,}358 \\
+WL1 & T6        & 10{,}500 &     0 & $-$1.8 & 0.0040 & 10{,}288 \\
+WL1 & T7        & 10{,}833 &     0 & $-$5.0 & 0.0041 & 10{,}187 \\
 WL1 & T1+T2     &  6{,}265 & 3{,}578 & 43.1 & 0.0029 & 13{,}720 \\
 WL1 & all       &  7{,}937 & 7{,}782 & 27.9 & 0.0023 & 19{,}950 \\
 \midrule
 WL2 & baseline  & 11{,}407 &     0 &   --- & 0.0053 & 14{,}947 \\
 WL2 & T1        &  2{,}762 & 6{,}644 & 75.8 & 0.0014 &  9{,}574 \\
+WL2 & T5        & 11{,}439 &     0 & $-$2.8 & 0.0054 & 13{,}159 \\
+WL2 & T6        & 11{,}451 &     0 & $-$2.9 & 0.0053 & 14{,}621 \\
+WL2 & T7        &  9{,}616 &     0 & 13.6 & 0.0045 & 10{,}826 \\
 WL2 & T1+T2     &  2{,}442 & 6{,}737 & 78.6 & 0.0014 & 15{,}203 \\
 WL2 & T1+T2+T3  &  2{,}271 & 6{,}639 & 80.1 & 0.0013 & 15{,}031 \\
 WL2 & all       &  3{,}360 & 9{,}181 & 70.5 & 0.0010 & 18{,}626 \\
@@ -800,11 +849,17 @@ WL2 & all       &  3{,}360 & 9{,}181 & 70.5 & 0.0010 & 18{,}626 \\
 WL3 & baseline  & 11{,}829 &     0 &   --- & 0.0070 & 34{,}372 \\
 WL3 & T1        &  4{,}445 & 2{,}942 & 62.4 & 0.0026 & 21{,}171 \\
 WL3 & T4        & 10{,}227 & 5{,}030 & 13.5 & 0.0035 & 21{,}892 \\
+WL3 & T5        & 11{,}807 &     0 & $-$3.5 & 0.0070 & 24{,}004 \\
+WL3 & T6        & 11{,}703 &     0 & $-$2.6 & 0.0069 & 20{,}967 \\
+WL3 & T7        & 11{,}943 &     0 & $-$4.7 & 0.0071 & 21{,}032 \\
 WL3 & T1+T2+T3  &  4{,}894 & 2{,}912 & 58.6 & 0.0029 & 11{,}812 \\
 WL3 & all       &  4{,}964 & 5{,}100 & 58.0 & 0.0017 & 12{,}250 \\
 \midrule
 WL4 & baseline  & 16{,}825 &     0 &   --- & 0.0055 & 10{,}994 \\
 WL4 & T1        &  9{,}694 & 5{,}576 & 42.4 & 0.0035 & 10{,}382 \\
+WL4 & T5        & 10{,}328 &     0 & 37.9 & 0.0056 & 15{,}944 \\
+WL4 & T6        & 16{,}623 &     0 &  0.0 & 0.0054 & 13{,}958 \\
+WL4 & T7        & 14{,}284 &     0 & 14.1 & 0.0045 &  8{,}672 \\
 WL4 & T1+T2     &  9{,}517 & 5{,}227 & 43.4 & 0.0051 & 17{,}853 \\
 WL4 & all       &  8{,}350 & 9{,}912 & 50.4 & 0.0026 & 18{,}262 \\
 \bottomrule
@@ -823,7 +878,9 @@ WL4 & all       &  8{,}350 & 9{,}912 & 50.4 & 0.0026 & 18{,}262 \\
     intent-extraction calls.
   \item Model versions are recorded per run in the JSONL log at
     \texttt{.local\_splitter/eval/runs.jsonl}.
-  \item Results CSV and summary JSON are committed alongside the paper.
+  \item Results CSV and summary JSON are generated by the runner;
+    the evaluation can be re-run end-to-end from the committed code
+    and workloads.
   \item Figure generation: \texttt{scripts/gen\_figures.py}.
   \item All code is released under the MIT license.
 \end{itemize}

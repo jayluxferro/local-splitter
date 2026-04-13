@@ -28,44 +28,54 @@ R1 = {
     "T2":       {"wl1": 20.6, "wl2": 20.3, "wl3": -4.7, "wl4": 15.5},
     "T3":       {"wl1":  9.9, "wl2": -1.2, "wl3": -5.0, "wl4":  3.6},
     "T4":       {"wl1":-39.4, "wl2":-43.1, "wl3": 11.7, "wl4":-35.8},
+    "T5":       {"wl1":  2.3, "wl2": -2.8, "wl3": -3.5, "wl4": 37.9},
+    "T6":       {"wl1": -1.8, "wl2": -2.9, "wl3": -2.6, "wl4":  0.0},
+    "T7":       {"wl1": -5.0, "wl2": 13.6, "wl3": -4.7, "wl4": 14.1},
     "T1+T3":    {"wl1": 34.1, "wl2": 65.6, "wl3": 56.8, "wl4": 34.8},
     "T1+T2":    {"wl1": 46.9, "wl2": 79.4, "wl3": 59.5, "wl4": 45.3},
     "T1+T2+T3": {"wl1": 42.4, "wl2": 79.1, "wl3": 60.6, "wl4": 45.6},
     "all":      {"wl1": 31.0, "wl2": 72.7, "wl3": 60.3, "wl4": 51.8},
 }
 
-# Run 2 savings (%)
+# Run 2 savings (%) — T5-T7 filled after second clean pass
 R2 = {
     "T1":       {"wl1": 30.3, "wl2": 75.8, "wl3": 62.4, "wl4": 42.4},
     "T2":       {"wl1": 24.1, "wl2": 18.3, "wl3": -0.5, "wl4": 22.3},
     "T3":       {"wl1":  9.3, "wl2": -0.8, "wl3": -2.6, "wl4":  1.1},
     "T4":       {"wl1":-30.7, "wl2":-37.8, "wl3": 13.5, "wl4":-26.4},
+    "T5":       {"wl1":  7.8, "wl2": -4.0, "wl3": -5.2, "wl4": 40.7},
+    "T6":       {"wl1": 11.7, "wl2": -8.1, "wl3":  3.1, "wl4": -3.3},
+    "T7":       {"wl1":  2.4, "wl2": -0.9, "wl3":  1.3, "wl4": -0.1},
     "T1+T3":    {"wl1": 33.3, "wl2": 75.3, "wl3": 58.0, "wl4": 37.7},
     "T1+T2":    {"wl1": 43.1, "wl2": 78.6, "wl3": 55.2, "wl4": 43.4},
     "T1+T2+T3": {"wl1": 42.9, "wl2": 80.1, "wl3": 58.6, "wl4": 42.0},
     "all":      {"wl1": 27.9, "wl2": 70.5, "wl3": 58.0, "wl4": 50.4},
 }
 
-# Run 2 cost data ($)
+# Run 2 cost data ($) — includes T5-T7 from clean run
 COST_R2 = {
     "wl1": {
         "baseline": 0.004254, "T1": 0.003084, "T2": 0.003671,
-        "T3": 0.003912, "T4": 0.003715, "T1+T3": 0.003020,
+        "T3": 0.003912, "T4": 0.003715, "T5": 0.004220,
+        "T6": 0.003950, "T7": 0.004149, "T1+T3": 0.003020,
         "T1+T2": 0.002881, "T1+T2+T3": 0.002896, "all": 0.002332,
     },
     "wl2": {
         "baseline": 0.005308, "T1": 0.001372, "T2": 0.005061,
-        "T3": 0.005361, "T4": 0.004827, "T1+T3": 0.001405,
+        "T3": 0.005361, "T4": 0.004827, "T5": 0.005402,
+        "T6": 0.005334, "T7": 0.004508, "T1+T3": 0.001405,
         "T1+T2": 0.001381, "T1+T2+T3": 0.001279, "all": 0.001009,
     },
     "wl3": {
         "baseline": 0.006988, "T1": 0.002620, "T2": 0.007024,
-        "T3": 0.007171, "T4": 0.003453, "T1+T3": 0.002933,
+        "T3": 0.007171, "T4": 0.003453, "T5": 0.006974,
+        "T6": 0.006912, "T7": 0.007056, "T1+T3": 0.002933,
         "T1+T2": 0.003120, "T1+T2+T3": 0.002889, "all": 0.001681,
     },
     "wl4": {
         "baseline": 0.005522, "T1": 0.003519, "T2": 0.006605,
-        "T3": 0.005408, "T4": 0.005128, "T1+T3": 0.003988,
+        "T3": 0.005408, "T4": 0.005128, "T5": 0.005619,
+        "T6": 0.005400, "T7": 0.004457, "T1+T3": 0.003988,
         "T1+T2": 0.005077, "T1+T2+T3": 0.005226, "all": 0.002567,
     },
 }
@@ -89,25 +99,28 @@ def halfrange(r1: dict, r2: dict, subset: str, wl: str) -> float:
 # ---------------------------------------------------------------------------
 
 def fig_singletons():
-    subsets = ["T1", "T2", "T3", "T4"]
-    colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336"]
+    subsets = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]
+    colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336",
+              "#9C27B0", "#795548", "#607D8B"]
     x = np.arange(len(WLS))
-    width = 0.18
+    width = 0.11
+    offset = (len(subsets) - 1) * width / 2
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(8, 4.5))
     for i, (subset, color) in enumerate(zip(subsets, colors)):
         means = [avg(R1, R2, subset, wl) for wl in WLS]
         errs = [halfrange(R1, R2, subset, wl) for wl in WLS]
-        bars = ax.bar(x + i * width, means, width, yerr=errs,
-                      label=subset, color=color, capsize=3, edgecolor="white")
+        ax.bar(x + i * width - offset, means, width, yerr=errs,
+               label=subset, color=color, capsize=2, edgecolor="white",
+               linewidth=0.5)
 
     ax.set_ylabel("Cloud token savings (%)")
-    ax.set_xticks(x + 1.5 * width)
+    ax.set_xticks(x)
     ax.set_xticklabels(WL_LABELS)
     ax.axhline(y=0, color="black", linewidth=0.5)
-    ax.legend(loc="lower left", framealpha=0.9)
+    ax.legend(loc="lower left", framealpha=0.9, ncol=4, fontsize=8)
     ax.set_title("Per-tactic savings in isolation")
-    ax.set_ylim(-55, 85)
+    ax.set_ylim(-85, 85)
     fig.tight_layout()
     fig.savefig(OUTDIR / "singletons.pdf", bbox_inches="tight")
     plt.close(fig)
@@ -149,7 +162,8 @@ def fig_combos():
 # ---------------------------------------------------------------------------
 
 def fig_cost_scatter():
-    subsets_ordered = ["T1", "T2", "T3", "T4", "T1+T3", "T1+T2", "T1+T2+T3", "all"]
+    subsets_ordered = ["T1", "T2", "T3", "T4", "T5", "T6", "T7",
+                       "T1+T3", "T1+T2", "T1+T2+T3", "all"]
     markers = {"wl1": "o", "wl2": "s", "wl3": "^", "wl4": "D"}
     wl_colors = {"wl1": "#2196F3", "wl2": "#4CAF50", "wl3": "#FF9800", "wl4": "#F44336"}
 
