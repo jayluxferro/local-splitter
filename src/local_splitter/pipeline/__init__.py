@@ -121,8 +121,8 @@ class Pipeline:
     def __init__(
         self,
         *,
-        cloud: ChatClient,
-        local: ChatClient | None,
+        cloud: ChatClient | None = None,
+        local: ChatClient | None = None,
         config: Config,
         cache_store: _sem_cache.CacheStore | None = None,
     ) -> None:
@@ -135,7 +135,8 @@ class Pipeline:
     async def aclose(self) -> None:
         if self.local is not None:
             await self.local.aclose()
-        await self.cloud.aclose()
+        if self.cloud is not None:
+            await self.cloud.aclose()
 
     async def complete(self, request: PipelineRequest) -> PipelineResponse:
         """Run the pipeline end-to-end.
@@ -378,6 +379,91 @@ class Pipeline:
         self._stats.record(resp)
         return resp
 
+    async def transform(
+        self, request: PipelineRequest
+    ) -> tuple[list[dict], list[StageEvent], str | None]:
+        """Run tactic transforms without calling any backend.
+
+        Returns ``(messages, trace, local_response)``. If T1 routes
+        locally or T3 hits cache, ``local_response`` contains the
+        answer and the caller can use it directly. Otherwise
+        ``local_response`` is ``None`` and ``messages`` contains the
+        transformed prompt for the caller's own model.
+
+        This is the core of local-only MCP mode: the agent calls
+        ``split.transform``, gets back either a ready answer or a
+        leaner prompt to send to its own cloud model.
+        """
+        trace: list[StageEvent] = []
+        auto_route = request.model_hint == "auto"
+        has_local = self.local is not None
+
+        # --- T1 route ---
+        if self.config.tactics.t1_route and has_local and auto_route:
+            route_result = await _route.apply(
+                request.messages,
+                local=self.local,
+                params=self.config.tactics.params.get("t1_route"),
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stop=request.stop,
+                seed=request.seed,
+                extra=request.extra,
+            )
+            trace.extend(route_result.events)
+            if route_result.local_reply is not None:
+                return request.messages, trace, route_result.local_reply.content
+
+        # --- T3 cache lookup ---
+        if (
+            self.config.tactics.t3_sem_cache
+            and has_local
+            and self.cache_store is not None
+            and auto_route
+        ):
+            cache_result = await _sem_cache.lookup(
+                request.messages,
+                local=self.local,
+                store=self.cache_store,
+                params=self.config.tactics.params.get("t3_sem_cache"),
+            )
+            trace.extend(cache_result.events)
+            if cache_result.hit and cache_result.entry is not None:
+                return request.messages, trace, cache_result.entry.response
+
+        # --- T2 compress, T6 intent, T5 diff, T7 batch ---
+        messages = request.messages
+        if self.config.tactics.t2_compress and has_local and auto_route:
+            r = await _compress.apply(
+                messages, local=self.local,
+                params=self.config.tactics.params.get("t2_compress"),
+            )
+            trace.extend(r.events)
+            messages = r.messages
+        if self.config.tactics.t6_intent and has_local and auto_route:
+            r = await _intent.apply(
+                messages, local=self.local,
+                params=self.config.tactics.params.get("t6_intent"),
+            )
+            trace.extend(r.events)
+            messages = r.messages
+        if self.config.tactics.t5_diff and has_local and auto_route:
+            r = await _diff.apply(
+                messages, local=self.local,
+                params=self.config.tactics.params.get("t5_diff"),
+            )
+            trace.extend(r.events)
+            messages = r.messages
+        if self.config.tactics.t7_batch and auto_route:
+            r = _batch.apply(
+                messages,
+                params=self.config.tactics.params.get("t7_batch"),
+            )
+            trace.extend(r.events)
+            messages = r.messages
+
+        return messages, trace, None
+
     async def stream(
         self, request: PipelineRequest
     ) -> AsyncIterator[StreamChunk]:
@@ -504,6 +590,11 @@ class Pipeline:
                 )
             return self.local, "local", "local_call"
         # auto or cloud
+        if self.cloud is None:
+            raise PipelineError(
+                "no cloud backend configured; use split.transform for "
+                "local-only mode or configure a cloud backend"
+            )
         return self.cloud, "cloud", "cloud_call"
 
     def stats(self) -> StatsSnapshot:

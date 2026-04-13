@@ -5,13 +5,23 @@ natively (Claude Code, Cursor-via-MCP, Codex CLI MCP, etc.). Tool names
 follow the `<project>.<verb>` convention shared with the sibling
 `resilient-write` / `llm-redactor` projects (`.agent/memory/gotchas.md`).
 
+Supports two modes:
+
+- **Full mode** (cloud + local configured): ``split.complete`` runs
+  tactics and returns the cloud response.
+- **Local-only mode** (no cloud backend): ``split.complete`` and
+  ``split.transform`` run tactics locally and return either a local
+  answer (T1 trivial / T3 cache hit) or the transformed messages
+  for the calling agent to send to its own model.
+
 Tools
 -----
-- `split.complete` — runs the full pipeline (all enabled tactics).
-- `split.classify` — runs the T1 classifier only (no answer generated).
-  Returns ``NOT_IMPLEMENTED`` when T1 is disabled or no local backend.
-- `split.cache_lookup` — queries T3 semantic cache without writing.
-  Returns ``hit=False`` when T3 is disabled or no cache store.
+- `split.complete` — full pipeline; in local-only mode returns answer
+  or passthrough with transformed messages.
+- `split.transform` — run transforms only, never calls a backend.
+  Returns answer or transformed messages.
+- `split.classify` — T1 classifier only (TRIVIAL / COMPLEX).
+- `split.cache_lookup` — T3 cache read-only lookup.
 - `split.stats` — aggregate metrics since process start.
 - `split.config` — read-only config view.
 """
@@ -38,9 +48,11 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
     @server.tool(
         name="split.complete",
         description=(
-            "Run a chat completion through the splitter pipeline. Stage 3 "
-            "forwards every request to the configured cloud model (or local "
-            "if model_hint='local')."
+            "Run a chat completion through the splitter pipeline. "
+            "If a cloud backend is configured, returns the full response. "
+            "If running in local-only mode (no cloud), returns a local "
+            "response for trivial requests or the transformed prompt for "
+            "complex ones (use split.transform for transform-only)."
         ),
     )
     async def split_complete(
@@ -55,6 +67,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
     ) -> dict[str, Any]:
         if model_hint not in ("auto", "local", "cloud"):
             raise ValueError(f"model_hint must be auto|local|cloud, got {model_hint!r}")
+
         req = PipelineRequest(
             messages=messages,
             model_hint=model_hint,  # type: ignore[arg-type]
@@ -67,6 +80,30 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
                 "tag": tag,
             },
         )
+
+        # Local-only mode: no cloud backend configured.
+        if pipeline.cloud is None:
+            transformed, trace, local_response = await pipeline.transform(req)
+            if local_response is not None:
+                return {
+                    "response": local_response,
+                    "served_by": "local",
+                    "action": "answer",
+                    "pipeline_trace": [e.as_dict() for e in trace],
+                }
+            return {
+                "response": None,
+                "served_by": "none",
+                "action": "passthrough",
+                "transformed_messages": transformed,
+                "note": (
+                    "No cloud backend configured. Use the transformed "
+                    "messages with your own model."
+                ),
+                "pipeline_trace": [e.as_dict() for e in trace],
+            }
+
+        # Full mode: cloud backend available.
         try:
             resp = await pipeline.complete(req)
         except PipelineError as e:
@@ -78,6 +115,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
         return {
             "response": resp.content,
             "served_by": resp.served_by,
+            "action": "answer",
             "finish_reason": resp.finish_reason,
             "model": resp.model,
             "tokens": {
@@ -88,6 +126,45 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
             },
             "latency_ms": round(resp.latency_ms, 3),
             "pipeline_trace": [e.as_dict() for e in resp.trace],
+        }
+
+    @server.tool(
+        name="split.transform",
+        description=(
+            "Run tactic transforms on messages without calling any backend. "
+            "Returns either a local answer (T1 trivial / T3 cache hit) or "
+            "the transformed messages for the caller to send to its own "
+            "model. This is the primary tool for local-only mode."
+        ),
+    )
+    async def split_transform(
+        messages: list[Message],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        req = PipelineRequest(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        try:
+            transformed, trace, local_response = await pipeline.transform(req)
+        except Exception as exc:
+            _log.warning("split.transform error: %s", exc)
+            return {"error": {"type": "transform_error", "message": str(exc)}}
+
+        if local_response is not None:
+            return {
+                "action": "answer",
+                "response": local_response,
+                "served_by": "local",
+                "pipeline_trace": [e.as_dict() for e in trace],
+            }
+        return {
+            "action": "passthrough",
+            "transformed_messages": transformed,
+            "served_by": "none",
+            "pipeline_trace": [e.as_dict() for e in trace],
         }
 
     @server.tool(

@@ -90,6 +90,7 @@ async def test_registered_tool_names_match_contract() -> None:
     names = {t.name for t in tools}
     assert names == {
         "split.complete",
+        "split.transform",
         "split.classify",
         "split.cache_lookup",
         "split.stats",

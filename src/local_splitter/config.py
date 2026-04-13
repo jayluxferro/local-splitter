@@ -142,7 +142,7 @@ class TacticsConfig:
 class Config:
     """Top-level config shared across both transports and the pipeline."""
 
-    cloud: ModelConfig
+    cloud: ModelConfig | None = None
     local: ModelConfig | None = None
     transport: TransportConfig = field(default_factory=TransportConfig)
     tactics: TacticsConfig = field(default_factory=TacticsConfig)
@@ -158,14 +158,18 @@ class Config:
             raise ConfigError(f"unsupported config version {version}; expected 1")
 
         models = data.get("models") or {}
-        if "cloud" not in models:
-            raise ConfigError("models.cloud is required")
-        cloud = ModelConfig.from_dict(models["cloud"], where="models.cloud")
+        cloud = (
+            ModelConfig.from_dict(models["cloud"], where="models.cloud")
+            if models.get("cloud")
+            else None
+        )
         local = (
             ModelConfig.from_dict(models["local"], where="models.local")
             if models.get("local")
             else None
         )
+        if cloud is None and local is None:
+            raise ConfigError("at least one of models.cloud or models.local is required")
 
         transport = TransportConfig.from_dict(data.get("transport") or {})
         tactics = TacticsConfig.from_dict(data.get("pipeline") or {})

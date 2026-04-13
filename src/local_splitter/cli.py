@@ -60,7 +60,7 @@ def _load(config_path: Path | None) -> Config:
 
 
 def _build_pipeline(config: Config) -> Pipeline:
-    cloud = build_chat_client(config.cloud)
+    cloud = build_chat_client(config.cloud) if config.cloud is not None else None
     local = build_chat_client(config.local) if config.local is not None else None
     return Pipeline(cloud=cloud, local=local, config=config)
 
@@ -93,10 +93,11 @@ def serve_http(
     bind_host = host or config.transport.http_host
     bind_port = port or config.transport.http_port
 
+    cloud_name = config.cloud.chat_model if config.cloud else "none"
+    local_name = config.local.chat_model if config.local else "none"
     typer.echo(
         f"local-splitter http proxy on http://{bind_host}:{bind_port}/v1  "
-        f"(cloud={config.cloud.chat_model}, "
-        f"local={config.local.chat_model if config.local else 'none'})"
+        f"(cloud={cloud_name}, local={local_name})"
     )
     uvicorn.run(app_fastapi, host=bind_host, port=bind_port, log_level=log_level.lower())
 

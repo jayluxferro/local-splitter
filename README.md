@@ -140,15 +140,19 @@ export OPENAI_API_KEY=your-key
 OPENAI_API_BASE=http://127.0.0.1:7788/v1 codex
 ```
 
-### As an MCP server
+### As an MCP server (local-only mode)
 
-For agents that speak MCP natively (Claude Code, Cursor-via-MCP):
+When the agent (Claude Code, Cursor) **is** the cloud model, the splitter
+only needs a local model. No cloud backend required — the splitter routes
+trivials locally and returns transformed prompts for complex requests.
 
 ```sh
+cp config.local-only.example.yaml config.yaml
 uv run local-splitter serve-mcp --config config.yaml
 ```
 
-Register with Claude Code by adding to your MCP config:
+Register with Claude Code by adding to `~/.claude.json` or your project's
+MCP config:
 
 ```json
 {
@@ -162,9 +166,16 @@ Register with Claude Code by adding to your MCP config:
 }
 ```
 
+**How it works in local-only mode:**
+
+1. Agent calls `split.transform` with the prompt
+2. If T1 classifies as TRIVIAL → returns `{"action": "answer", "response": "..."}` (answered locally, no cloud tokens spent)
+3. If COMPLEX → returns `{"action": "passthrough", "transformed_messages": [...]}` (compressed/optimized prompt for the agent's own model)
+
 Exposed MCP tools:
-- `split.complete` — run a request through the full pipeline
-- `split.classify` — run T1 classifier only (no answer)
+- `split.complete` — full pipeline; returns local answer or transformed messages
+- `split.transform` — transforms only, never calls a backend
+- `split.classify` — run T1 classifier only (TRIVIAL / COMPLEX)
 - `split.cache_lookup` — check T3 cache without writing
 - `split.stats` — aggregate metrics since startup
 - `split.config` — read-only config view
