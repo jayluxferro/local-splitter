@@ -7,8 +7,7 @@ as a *triage layer* in front of a frontier cloud model.
 Individual tactics (routing, compression, caching, local drafting) are known
 in isolation. What is *not* well-documented is how they combine on a realistic
 coding-agent workload, and which combinations give the best marginal savings
-vs. quality loss. This project answers that question empirically and writes
-the results up as an arXiv paper.
+vs. quality loss. This project answers that question empirically.
 
 ## Quick start
 
@@ -138,55 +137,54 @@ env var > `.local_splitter/config.yaml` > `./config.yaml`.
 
 ## Usage
 
-Start the proxy, then point your agent at it. The proxy speaks both the
-**OpenAI** and **Anthropic** API formats, so any agent works transparently.
+Three ways to use local-splitter, from most transparent to most explicit.
+
+---
+
+### Option A: HTTP proxy (fully transparent)
+
+The agent has no idea the splitter exists. Every request is intercepted,
+tactics run, and the response comes back with fewer cloud tokens spent.
+
+**Requires a cloud backend** — use a `configs/proxy/` preset.
 
 ```sh
+# 1. Configure
+cp configs/proxy/recommended.yaml config.yaml
+# Edit config.yaml: set your cloud endpoint + API key env var
+
+# 2. Start the proxy
 uv run local-splitter serve-http --config config.yaml
+
+# 3. Point your agent at it
 ```
 
-### Claude Code
+| Agent | Command |
+|-------|---------|
+| **Claude Code** | `ANTHROPIC_BASE_URL=http://127.0.0.1:7788 claude` |
+| **Cursor / Continue** | Set API Base to `http://127.0.0.1:7788/v1` in settings |
+| **Codex CLI** | `OPENAI_API_BASE=http://127.0.0.1:7788/v1 codex` |
+| **Any OpenAI-compatible** | `export OPENAI_API_BASE=http://127.0.0.1:7788/v1` |
+
+The proxy speaks both **OpenAI** (`/v1/chat/completions`) and **Anthropic**
+(`/v1/messages`) formats with streaming support.
+
+---
+
+### Option B: MCP server (local-only, agent-aware)
+
+The agent registers the splitter as an MCP tool and calls `split.transform`
+before sending prompts. **No cloud backend needed** — the agent IS the
+cloud model.
 
 ```sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:7788 claude
-```
-
-### Cursor / Continue / any OpenAI-compatible agent
-
-Set in the agent's settings:
-
-```
-API Base: http://127.0.0.1:7788/v1
-API Key:  <your real cloud key>
-Model:    gpt-4o-mini
-```
-
-Or via environment:
-
-```sh
-export OPENAI_API_BASE=http://127.0.0.1:7788/v1
-export OPENAI_API_KEY=your-key
-```
-
-### Codex CLI
-
-```sh
-OPENAI_API_BASE=http://127.0.0.1:7788/v1 codex
-```
-
-### As an MCP server (local-only mode)
-
-When the agent (Claude Code, Cursor) **is** the cloud model, the splitter
-only needs a local model. No cloud backend required — the splitter routes
-trivials locally and returns transformed prompts for complex requests.
-
-```sh
+# 1. Configure (local model only)
 cp configs/mcp/recommended.yaml config.yaml
-uv run local-splitter serve-mcp --config config.yaml
+
+# 2. Register with Claude Code
 ```
 
-Register with Claude Code by adding to `~/.claude.json` or your project's
-MCP config:
+Add to `~/.claude/settings.json` or your project's `.mcp.json`:
 
 ```json
 {
@@ -200,45 +198,59 @@ MCP config:
 }
 ```
 
-**How it works in local-only mode:**
+The agent can then call these MCP tools:
 
-1. Agent calls `split.transform` with the prompt
-2. If T1 classifies as TRIVIAL → returns `{"action": "answer", "response": "..."}` (answered locally, no cloud tokens spent)
-3. If COMPLEX → returns `{"action": "passthrough", "transformed_messages": [...]}` (compressed/optimized prompt for the agent's own model)
+| Tool | What it does |
+|------|-------------|
+| `split.transform` | Run tactics, return local answer or transformed prompt |
+| `split.complete` | Full pipeline (auto-detects local-only mode) |
+| `split.classify` | T1 classifier only — TRIVIAL or COMPLEX |
+| `split.cache_lookup` | Check T3 cache without writing |
+| `split.stats` | Aggregate metrics since startup |
+| `split.config` | Read-only config view |
 
-Exposed MCP tools:
-- `split.complete` — full pipeline; returns local answer or transformed messages
-- `split.transform` — transforms only, never calls a backend
-- `split.classify` — run T1 classifier only (TRIVIAL / COMPLEX)
-- `split.cache_lookup` — check T3 cache without writing
-- `split.stats` — aggregate metrics since startup
-- `split.config` — read-only config view
+**How `split.transform` works:**
 
-### CLI transform (for hooks)
+```
+Agent calls split.transform(messages=[...])
+  │
+  ├─ TRIVIAL (T1) → {"action": "answer", "response": "2 + 2 = 4"}
+  │                   Agent uses this directly. Zero cloud tokens.
+  │
+  └─ COMPLEX → {"action": "passthrough", "messages": [...]}
+                Agent sends the (compressed) messages to its own model.
+```
 
-One-shot transform for integration with agent hooks. Reads a prompt,
-runs tactics, prints JSON to stdout.
+To make the agent use `split.transform` by default, add to your
+project's `CLAUDE.md`:
+
+```
+Before processing any user request, call split.transform with the full
+message. If action=answer, use that response. If action=passthrough,
+use the transformed_messages instead of the original prompt.
+```
+
+---
+
+### Option C: CLI transform (hook-based, automatic)
+
+One-shot CLI command for agent hooks. Reads a prompt, runs tactics,
+prints JSON to stdout. Bridges local-only mode into a transparent flow.
 
 ```sh
-# Plain text prompt
-echo "what is 2+2" | local-splitter transform --config config.yaml
+# Plain text — answered locally
+echo "what is 2+2" | local-splitter transform -c config.yaml
 # → {"action": "answer", "response": "2 + 2 = 4", "served_by": "local", ...}
 
-# Complex prompt passes through
-echo "refactor the auth middleware..." | local-splitter transform -c config.yaml
+# Complex — passes through
+echo "refactor the auth middleware with JWT rotation" | local-splitter transform -c config.yaml
 # → {"action": "passthrough", "messages": [...], ...}
 
-# Or use --prompt flag
+# Or with --prompt flag
 local-splitter transform -p "explain merge sort" -c config.yaml
 ```
 
-Output is always one JSON object:
-- `{"action": "answer", "response": "..."}` — answered locally, use directly
-- `{"action": "passthrough", "messages": [...]}` — send to your model
-
-#### Claude Code hook setup
-
-Add to your Claude Code `settings.json`:
+**Claude Code hook setup** — add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -253,7 +265,9 @@ Add to your Claude Code `settings.json`:
 }
 ```
 
-### API surfaces
+---
+
+### API reference
 
 | Endpoint | Format | Streaming |
 |----------|--------|-----------|
@@ -263,7 +277,7 @@ Add to your Claude Code `settings.json`:
 | `GET /v1/splitter/stats` | JSON | — |
 | `GET /healthz` | JSON | — |
 
-Both surfaces add a `splitter` key to responses with observability data:
+Both HTTP surfaces add a `splitter` key to responses with pipeline trace:
 
 ```json
 {
@@ -285,8 +299,8 @@ Override the pipeline per-request:
 
 ```python
 # Via HTTP extra_body (OpenAI surface)
-{"extra_body": {"splitter": {"force_local": True}}}   # bypass pipeline, use local
-{"extra_body": {"splitter": {"force_cloud": True}}}   # bypass pipeline, use cloud
+{"extra_body": {"splitter": {"force_local": True}}}
+{"extra_body": {"splitter": {"force_cloud": True}}}
 
 # Via MCP model_hint
 {"model_hint": "local"}
@@ -375,15 +389,14 @@ src/local_splitter/
     └── report.py           #   CSV + markdown export
 
 evals/workloads/            # Evaluation datasets (JSONL)
-paper/                      # LaTeX paper
-tests/                      # 171 tests
+tests/                      # 175 tests
 ```
 
 ## Development
 
 ```sh
 uv sync                  # install deps
-uv run pytest -q         # run tests (171 tests, <1s)
+uv run pytest -q         # run tests (175 tests, <1s)
 uv run ruff check src/   # lint
 ```
 
@@ -400,34 +413,6 @@ Every tactic must:
 - Fail open on errors (pass request through unchanged)
 - Use `temperature=0` for deterministic classifier/extractor calls
 
-## Paper
-
-The paper skeleton is in `paper/paper.tex`. It measures all seven tactics
-individually, in pairs, and in greedy-additive subsets across the four
-workload classes above. See `docs/EVALUATION.md` for the research questions
-and success criteria.
-
-## Results
-
-Evaluated with **llama3.2:3b** (local) and **gemma3** (cloud via Ollama),
-10 samples per workload:
-
-| Subset | WL1 edit | WL2 explain | WL3 chat | WL4 RAG |
-|--------|---------|-------------|----------|---------|
-| T1 route | 28.2% | 61.9% | 55.4% | 33.7% |
-| T2 compress | 20.6% | 20.3% | — | 15.5% |
-| T1+T2 | **46.9%** | **79.4%** | 59.5% | 45.3% |
-| T1+T2+T3 | 42.4% | 79.1% | **60.6%** | 45.6% |
-| all | 31.0% | 72.7% | 60.3% | **51.8%** |
-
-**Key findings:**
-- **T1+T2 is the best 2-tactic combination** (47–79% cloud token savings)
-- T1 alone routes 50–70% of requests locally (28–62% savings)
-- T1+T2+T3 adds semantic caching on top — marginal on single-pass, stronger with repetition
-- On WL4 (RAG-heavy), **"all" beats T1+T2+T3** (51.8% vs 45.6%) because
-  T4 draft-review helps when outputs are long
-- **Optimal subset is workload-dependent** — the paper's key finding
-
 ## License
 
 MIT
@@ -443,4 +428,3 @@ MIT
 - [x] CLI eval command + seed workloads (4 classes, 40 samples)
 - [x] Evaluation with real numbers (Ollama llama3.2:3b + gemma3)
 - [x] Paper with results (tables, figures, quality evaluation)
-- [ ] arXiv submission

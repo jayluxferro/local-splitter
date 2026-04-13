@@ -43,15 +43,6 @@ htmlcov/
 # Eval output (keep seed workloads under evals/workloads/)
 .local_splitter/eval/
 
-# LaTeX build artefacts (keep .bbl per gotcha)
-paper/*.aux
-paper/*.log
-paper/*.out
-paper/*.toc
-paper/*.blg
-paper/*.synctex.gz
-paper/*.fls
-paper/*.fdb_latexmk
 
 # Local config (use config.example.yaml as template)
 config.yaml
@@ -63,7 +54,9 @@ FIRST_INSTRUCTION.md
 AGENT.md
 .agent/
 
-# Build output
+# Paper (kept separately for arXiv submission)
+paper/
+Makefile
 local-splitter-arxiv.zip
 
 # Misc
