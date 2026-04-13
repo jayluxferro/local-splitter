@@ -1,0 +1,40 @@
+# MCP Recommended — T1 + T2 (no cloud backend)
+#
+# Best general-purpose MCP config. T1 routes trivials locally,
+# T2 compresses prompts for complex requests before your agent
+# sends them to its own model.
+#
+# How it works with your agent:
+#   1. Agent calls split.transform with a prompt
+#   2. TRIVIAL → local answer returned (zero cloud tokens)
+#   3. COMPLEX → compressed prompt returned (fewer tokens for
+#      the agent to send to its own model)
+#
+# Eval results (llama3.2:3b, 10 samples/workload):
+#   WL1 edit:    45% cloud token savings
+#   WL2 explain: 79% cloud token savings
+#   WL3 chat:    57% cloud token savings
+#   WL4 RAG:     44% cloud token savings
+#   Average:     56% cloud token savings
+#
+# Quality: baseline wins ~3x more judge verdicts than treatment
+# on explanation-heavy workloads. Acceptable on edit/RAG workloads.
+
+version: 1
+
+models:
+  local:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: llama3.2:3b
+    embed_model: nomic-embed-text
+    num_ctx: 8192
+
+pipeline:
+  t1_route:      { enabled: true, trivial_threshold: 0.8 }
+  t2_compress:   { enabled: true, ratio_target: 0.5 }
+  t3_sem_cache:  { enabled: false }
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }

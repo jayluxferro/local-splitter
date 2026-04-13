@@ -72,44 +72,66 @@ unchanged.
 
 ## Configuration
 
-Pick a preset based on your workload:
+Two sets of presets — pick based on how you're using the splitter.
+
+### Proxy mode (transparent interceptor)
+
+For agents pointed at the splitter's HTTP endpoint. Requires a cloud
+backend — the splitter calls it on your behalf.
 
 | Preset | Tactics | Savings | Use case |
 |--------|---------|---------|----------|
-| [`conservative`](configs/conservative.yaml) | T1 | 29-69% | Safest — only routes trivials locally |
-| [`recommended`](configs/recommended.yaml) | T1+T2 | 45-79% | **Best default** — route + compress |
-| [`max-savings`](configs/max-savings.yaml) | T1+T2+T3 | 43-80% | Adds caching — best for repetitive workloads |
-| [`rag-heavy`](configs/rag-heavy.yaml) | T1+T2+T3+T4+T5 | 51% on RAG | Long-context workloads with retrieved chunks |
-| [`local-only-mcp`](configs/local-only-mcp.yaml) | T1+T2+T3+T5 | varies | MCP mode — agent is the cloud model |
-
-**Per-workload cloud token savings (%)** — evaluated with llama3.2:3b
-(local) and gemma3:4b (cloud), 10 samples per workload, mean of 2 runs:
-
-| Preset | WL1 (edit) | WL2 (explain) | WL3 (chat) | WL4 (RAG) | Avg |
-|--------|-----------|---------------|------------|-----------|-----|
-| `conservative` | 29% | 69% | 59% | 38% | 49% |
-| **`recommended`** | **45%** | **79%** | 57% | 44% | **56%** |
-| `max-savings` | 43% | **80%** | **60%** | 44% | **56%** |
-| `rag-heavy` | 29% | 72% | 59% | **51%** | 53% |
-
-Key observations:
-- `recommended` and `max-savings` tie on average (56%). The difference
-  is that `max-savings` adds T3 caching which compounds over repeated queries.
-- `rag-heavy` underperforms on non-RAG workloads because T4 (draft-review)
-  increases cloud input tokens on short-output requests.
-- `conservative` still saves 49% on average — start here if quality is
-  the top priority.
-- Quality evaluation shows baseline wins ~3x more judge verdicts than
-  treatment. The savings come at a measurable quality cost, concentrated
-  on explanation-heavy workloads. See the paper for details.
+| [`proxy/conservative`](configs/proxy/conservative.yaml) | T1 | 29-69% | Safest — only routes trivials locally |
+| [`proxy/recommended`](configs/proxy/recommended.yaml) | T1+T2 | 45-79% | **Best default** — route + compress |
+| [`proxy/max-savings`](configs/proxy/max-savings.yaml) | T1+T2+T3 | 43-80% | Adds caching — best for repetitive workloads |
+| [`proxy/rag-heavy`](configs/proxy/rag-heavy.yaml) | T1+T2+T3+T4+T5 | 51% on RAG | Long-context workloads with retrieved chunks |
 
 ```sh
-# Copy a preset
-cp configs/recommended.yaml config.yaml
-
+cp configs/proxy/recommended.yaml config.yaml
 # Edit: set your cloud endpoint + API key env var
-vim config.yaml
 ```
+
+### MCP mode (agent is the cloud model)
+
+For Claude Code, Cursor, and other MCP-aware agents. **No cloud backend
+needed** — the splitter answers trivials locally and returns compressed
+prompts for the agent's own model.
+
+| Preset | Tactics | Savings | Use case |
+|--------|---------|---------|----------|
+| [`mcp/conservative`](configs/mcp/conservative.yaml) | T1 | 29-69% | Safest — complex requests pass through untouched |
+| [`mcp/recommended`](configs/mcp/recommended.yaml) | T1+T2 | 45-79% | **Best default** — route + compress |
+| [`mcp/max-savings`](configs/mcp/max-savings.yaml) | T1+T2+T3 | 43-80% | Adds caching — compounds with query repetition |
+| [`mcp/rag-heavy`](configs/mcp/rag-heavy.yaml) | T1+T2+T3+T5 | 44-51% | Long-context RAG workloads |
+
+```sh
+cp configs/mcp/recommended.yaml config.yaml
+# No cloud config needed — just Ollama
+```
+
+### Eval results per workload
+
+Evaluated with llama3.2:3b (local) and gemma3:4b (cloud), 10 samples
+per workload, mean of 2 runs:
+
+| Config | WL1 (edit) | WL2 (explain) | WL3 (chat) | WL4 (RAG) | Avg |
+|--------|-----------|---------------|------------|-----------|-----|
+| `conservative` (T1) | 29% | 69% | 59% | 38% | 49% |
+| **`recommended`** (T1+T2) | **45%** | **79%** | 57% | 44% | **56%** |
+| `max-savings` (T1+T2+T3) | 43% | **80%** | **60%** | 44% | **56%** |
+| `rag-heavy` (proxy, +T4+T5) | 29% | 72% | 59% | **51%** | 53% |
+| `rag-heavy` (mcp, +T5) | — | — | — | 44-51% | — |
+
+Key observations:
+- **Start with `recommended`** (T1+T2). 56% average savings, works
+  across all workload types.
+- `max-savings` adds T3 caching — same average but compounds over
+  repeated queries (support bots, multi-user teams).
+- `rag-heavy` proxy wins on WL4 because T4 (draft-review) helps with
+  long outputs. MCP mode skips T4 (the agent is the reviewer).
+- `conservative` still saves 49% — use if quality is the top priority.
+- Quality cost: baseline wins ~3x more judge verdicts on explanation-heavy
+  workloads. Acceptable on edit/RAG workloads. See the paper for details.
 
 Config resolution order: explicit `--config` flag > `$LOCAL_SPLITTER_CONFIG`
 env var > `.local_splitter/config.yaml` > `./config.yaml`.
@@ -159,7 +181,7 @@ only needs a local model. No cloud backend required — the splitter routes
 trivials locally and returns transformed prompts for complex requests.
 
 ```sh
-cp config.local-only.example.yaml config.yaml
+cp configs/mcp/recommended.yaml config.yaml
 uv run local-splitter serve-mcp --config config.yaml
 ```
 

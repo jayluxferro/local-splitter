@@ -1,0 +1,38 @@
+# MCP Conservative — T1 only (no cloud backend)
+#
+# Safest option. T1 classifies requests as TRIVIAL/COMPLEX.
+# Trivials are answered by the local model — the agent never
+# sees them. Complex requests pass through untouched.
+#
+# How it works with your agent:
+#   1. Agent calls split.transform with a prompt
+#   2. TRIVIAL → local answer returned (zero cloud tokens)
+#   3. COMPLEX → original prompt returned unchanged
+#
+# Eval results (llama3.2:3b, 10 samples/workload):
+#   WL1 edit:    29% of requests answered locally
+#   WL2 explain: 69% of requests answered locally
+#   WL3 chat:    59% of requests answered locally
+#   WL4 RAG:     38% of requests answered locally
+#
+# Quality: lowest risk — complex requests are never modified.
+# Only failure mode: ~12% false-positive rate (trivial
+# classification for genuinely complex requests).
+
+version: 1
+
+models:
+  local:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: llama3.2:3b
+    num_ctx: 8192
+
+pipeline:
+  t1_route:      { enabled: true, trivial_threshold: 0.8 }
+  t2_compress:   { enabled: false }
+  t3_sem_cache:  { enabled: false }
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }

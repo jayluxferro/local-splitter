@@ -1,0 +1,42 @@
+# MCP RAG-Heavy — T1 + T2 + T3 + T5 (no cloud backend)
+#
+# For agents working with long-context RAG workloads (10-40K token
+# system prompts with retrieved chunks). T5 (diff) extracts minimal
+# context from long messages, acting as a secondary compressor.
+#
+# T4 (draft-review) is NOT included — it requires a cloud backend
+# to review the draft. In MCP mode the agent is the reviewer, so
+# T4 would just add a redundant local generation step.
+#
+# How it works with your agent:
+#   1. Agent calls split.transform with a long RAG prompt
+#   2. TRIVIAL → local answer (zero tokens)
+#   3. CACHE HIT → cached response (zero tokens)
+#   4. COMPLEX → compressed + context-extracted prompt returned
+#
+# Eval results (llama3.2:3b, 10 samples/workload):
+#   WL4 RAG:     39% savings from T5 diff alone
+#   Combined with T1+T2+T3: ~44-51% total savings on RAG workloads
+#
+# Note: T5's edit-detection heuristic triggers on RAG content keywords,
+# acting as an opportunistic compressor. This is a documented side
+# effect — see paper §7.3.
+
+version: 1
+
+models:
+  local:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: llama3.2:3b
+    embed_model: nomic-embed-text
+    num_ctx: 8192
+
+pipeline:
+  t1_route:      { enabled: true, trivial_threshold: 0.8 }
+  t2_compress:   { enabled: true, ratio_target: 0.5 }
+  t3_sem_cache:  { enabled: true, similarity_threshold: 0.92, ttl: 86400 }
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: true }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }
