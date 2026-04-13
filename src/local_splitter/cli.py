@@ -4,6 +4,7 @@ Subcommands:
 
     local-splitter serve-http  --config PATH     # FastAPI OpenAI-compat proxy
     local-splitter serve-mcp   --config PATH     # MCP stdio server
+    local-splitter transform                     # one-shot transform (for hooks)
     local-splitter eval        --workload PATH   # run evaluation harness
     local-splitter --version                     # print version
 """
@@ -11,7 +12,9 @@ Subcommands:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sys
 from pathlib import Path
 
 import typer
@@ -123,6 +126,100 @@ def serve_mcp(
 
     server = create_mcp_server(pipeline, config)
     asyncio.run(server.run_stdio_async())
+
+
+@app.command("transform")
+def transform_cmd(
+    config_path: Path | None = typer.Option(
+        None, "--config", "-c",
+        help="Path to config.yaml.",
+        exists=False, dir_okay=False,
+    ),
+    prompt: str | None = typer.Option(
+        None, "--prompt", "-p",
+        help="Prompt text (alternative to stdin).",
+    ),
+    log_level: str = typer.Option("warning", "--log-level"),
+) -> None:
+    """One-shot transform for hook integration.
+
+    Reads a prompt from --prompt or stdin, runs tactic transforms
+    (T1 route, T2 compress, T3 cache, T5 diff), and prints JSON
+    to stdout. Designed for use in Claude Code hooks.
+
+    \b
+    Input: plain text prompt, or JSON {"messages": [...]}
+    Output JSON:
+      {"action": "answer", "response": "..."}        — answered locally
+      {"action": "passthrough", "messages": [...]}    — send these to your model
+
+    \b
+    Example hook usage:
+      local-splitter transform -p "what is 2+2" --config config.yaml
+    """
+    logging.basicConfig(level=log_level.upper())
+    config = _load(config_path)
+    pipeline = _build_pipeline(config)
+
+    # Read input.
+    if prompt is not None:
+        raw_input = prompt
+    elif not sys.stdin.isatty():
+        raw_input = sys.stdin.read()
+    else:
+        typer.secho(
+            "error: provide --prompt or pipe input via stdin",
+            fg=typer.colors.RED, err=True,
+        )
+        raise typer.Exit(code=1)
+
+    raw_input = raw_input.strip()
+    if not raw_input:
+        typer.secho("error: empty input", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    # Parse input: JSON messages array or plain text.
+    messages: list[dict[str, str]]
+    try:
+        parsed = json.loads(raw_input)
+        if isinstance(parsed, dict) and "messages" in parsed:
+            messages = parsed["messages"]
+        elif isinstance(parsed, list):
+            messages = parsed
+        else:
+            messages = [{"role": "user", "content": raw_input}]
+    except json.JSONDecodeError:
+        messages = [{"role": "user", "content": raw_input}]
+
+    from local_splitter.pipeline import PipelineRequest
+
+    req = PipelineRequest(messages=messages)
+
+    async def _run():
+        return await pipeline.transform(req)
+
+    try:
+        transformed, trace, local_response = asyncio.run(_run())
+    except Exception as exc:
+        result = {"action": "error", "error": str(exc)}
+        typer.echo(json.dumps(result))
+        raise typer.Exit(code=1) from exc
+
+    if local_response is not None:
+        result = {
+            "action": "answer",
+            "response": local_response,
+            "served_by": "local",
+            "trace": [e.as_dict() for e in trace],
+        }
+    else:
+        result = {
+            "action": "passthrough",
+            "messages": transformed,
+            "trace": [e.as_dict() for e in trace],
+        }
+
+    typer.echo(json.dumps(result))
 
 
 @app.command("eval")

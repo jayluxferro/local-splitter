@@ -214,6 +214,45 @@ Exposed MCP tools:
 - `split.stats` — aggregate metrics since startup
 - `split.config` — read-only config view
 
+### CLI transform (for hooks)
+
+One-shot transform for integration with agent hooks. Reads a prompt,
+runs tactics, prints JSON to stdout.
+
+```sh
+# Plain text prompt
+echo "what is 2+2" | local-splitter transform --config config.yaml
+# → {"action": "answer", "response": "2 + 2 = 4", "served_by": "local", ...}
+
+# Complex prompt passes through
+echo "refactor the auth middleware..." | local-splitter transform -c config.yaml
+# → {"action": "passthrough", "messages": [...], ...}
+
+# Or use --prompt flag
+local-splitter transform -p "explain merge sort" -c config.yaml
+```
+
+Output is always one JSON object:
+- `{"action": "answer", "response": "..."}` — answered locally, use directly
+- `{"action": "passthrough", "messages": [...]}` — send to your model
+
+#### Claude Code hook setup
+
+Add to your Claude Code `settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Task|Bash|Edit|Write",
+        "hook": "echo \"$PROMPT\" | local-splitter transform -c /path/to/config.yaml"
+      }
+    ]
+  }
+}
+```
+
 ### API surfaces
 
 | Endpoint | Format | Streaming |
