@@ -109,7 +109,7 @@ def test_force_cloud_explicitly() -> None:
     assert local.calls == []
 
 
-def test_stream_true_rejected_501() -> None:
+def test_stream_true_returns_sse() -> None:
     client, _, _ = _client()
     r = client.post(
         "/v1/chat/completions",
@@ -118,8 +118,11 @@ def test_stream_true_rejected_501() -> None:
             "stream": True,
         },
     )
-    assert r.status_code == 501
-    assert "stream" in r.json()["detail"].lower()
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    text = r.text
+    assert "data: " in text
+    assert "data: [DONE]" in text
 
 
 def test_empty_messages_rejected_400() -> None:

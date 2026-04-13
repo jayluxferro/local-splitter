@@ -6,11 +6,11 @@ transport transparently:
     export OPENAI_API_BASE=http://127.0.0.1:7788/v1
     export OPENAI_API_KEY=unused
 
-Stage 3 status
---------------
-- `POST /v1/chat/completions`: non-streaming only. Requests with
-  `"stream": true` are rejected with `501` until Stage 4+ wires real
-  SSE passthrough.
+Endpoints
+---------
+- `POST /v1/chat/completions`: streaming (SSE) and non-streaming.
+  Tactics run on the request before streaming begins; T4 (draft-review)
+  is skipped in streaming mode.
 - `GET  /v1/models`: returns the configured local + cloud models.
 - `GET  /v1/splitter/stats`: returns aggregate pipeline metrics.
 
@@ -20,6 +20,7 @@ report what happened. Standard OpenAI clients ignore unknown keys.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -28,6 +29,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
 
 from local_splitter import __version__
 from local_splitter.config import Config
@@ -57,15 +59,6 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body must be a JSON object")
 
-        if body.get("stream"):
-            raise HTTPException(
-                status_code=501,
-                detail=(
-                    "stream=true is not yet supported by the splitter proxy; "
-                    "Stage 4+ will add SSE passthrough."
-                ),
-            )
-
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise HTTPException(
@@ -87,13 +80,23 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             max_tokens=body.get("max_tokens"),
             stop=body.get("stop"),
             seed=body.get("seed"),
-            stream=False,
+            stream=bool(body.get("stream")),
             meta={
                 "tool_name": splitter_opts.get("tool_name"),
                 "tag": splitter_opts.get("tag"),
                 "model_requested": body.get("model"),
             },
         )
+
+        if pipeline_req.stream:
+            return StreamingResponse(
+                _sse_generator(pipeline, pipeline_req, body.get("model")),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         try:
             pr = await pipeline.complete(pipeline_req)
@@ -137,6 +140,43 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     return app
+
+
+async def _sse_generator(
+    pipeline: Pipeline, req: PipelineRequest, request_model: str | None
+):
+    """Yield OpenAI-compatible SSE chunks from the pipeline's stream."""
+    chat_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+
+    try:
+        async for chunk in pipeline.stream(req):
+            data = {
+                "id": chat_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": request_model or "",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": chunk.delta} if chunk.delta else {},
+                        "finish_reason": chunk.finish_reason if chunk.done else None,
+                    }
+                ],
+            }
+            if chunk.done and chunk.usage:
+                data["usage"] = {
+                    "prompt_tokens": chunk.usage.input_tokens or 0,
+                    "completion_tokens": chunk.usage.output_tokens or 0,
+                    "total_tokens": (chunk.usage.input_tokens or 0) + (chunk.usage.output_tokens or 0),
+                }
+            yield f"data: {json.dumps(data)}\n\n"
+    except (PipelineError, ModelBackendError) as e:
+        _log.warning("streaming error: %s", e)
+        error_data = {"error": {"message": str(e), "type": type(e).__name__}}
+        yield f"data: {json.dumps(error_data)}\n\n"
+
+    yield "data: [DONE]\n\n"
 
 
 def _pipeline_to_openai(pr, *, request_model: str | None) -> dict[str, Any]:

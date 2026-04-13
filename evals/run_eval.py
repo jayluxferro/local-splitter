@@ -25,7 +25,9 @@ from local_splitter.evals import (
     TACTIC_SUBSETS,
     comparison_table,
     cost_estimate,
+    judge_quality,
     load_workload,
+    quality_summary,
     routing_accuracy,
     run_matrix,
     to_csv,
@@ -61,9 +63,12 @@ EVAL_SUBSETS = {
 
 
 async def main() -> None:
-    # CLI: pass subset names as args to run only those (+ baseline).
+    # CLI: pass subset names or --quality as args.
     # e.g.: uv run python evals/run_eval.py T5_only T6_only T7_only
-    requested = set(sys.argv[1:]) if len(sys.argv) > 1 else None
+    # e.g.: uv run python evals/run_eval.py --quality
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    run_quality = "--quality" in sys.argv[1:]
+    requested = set(args) if args else None
     if requested:
         subsets = {"baseline": EVAL_SUBSETS["baseline"]}
         for name in requested:
@@ -182,6 +187,33 @@ async def main() -> None:
                     (base_cloud - run_cloud) / base_cloud * 100 if base_cloud > 0 else 0, 1
                 ),
             }
+
+        # --- Quality evaluation (judge-model pairwise comparison) ---
+        if run_quality and len(runs) >= 2:
+            baseline_run = runs[0]
+            for run in runs[1:]:
+                # Skip near-zero-effect subsets.
+                base_cloud = baseline_run.summary.tokens_in_cloud + baseline_run.summary.tokens_out_cloud
+                run_cloud = run.summary.tokens_in_cloud + run.summary.tokens_out_cloud
+                savings = (base_cloud - run_cloud) / base_cloud * 100 if base_cloud > 0 else 0
+                if abs(savings) < 5:
+                    continue
+
+                print(f"  Judging quality: {run.subset_name} vs baseline...")
+                verdicts = await judge_quality(
+                    samples, baseline_run.samples, run.samples, judge=cloud,
+                )
+                qs = quality_summary(verdicts)
+                print(
+                    f"    {run.subset_name}: "
+                    f"baseline={qs['baseline_wins']} "
+                    f"treatment={qs['treatment_wins']} "
+                    f"tie={qs['ties']} "
+                    f"inconsistent={qs['inconsistent']} "
+                    f"errors={qs['errors']} "
+                    f"(treatment win rate: {qs['treatment_win_rate']:.0%})"
+                )
+                summaries[wl_name]["subsets"][run.subset_name]["quality"] = qs
 
         cache_store.close()
 

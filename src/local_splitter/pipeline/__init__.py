@@ -17,8 +17,10 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
+from collections.abc import AsyncIterator
+
 from local_splitter.config import Config
-from local_splitter.models import ChatClient, ModelBackendError, Usage
+from local_splitter.models import ChatClient, ModelBackendError, StreamChunk, Usage
 
 from . import batch as _batch
 from . import compress as _compress
@@ -375,6 +377,115 @@ class Pipeline:
         )
         self._stats.record(resp)
         return resp
+
+    async def stream(
+        self, request: PipelineRequest
+    ) -> AsyncIterator[StreamChunk]:
+        """Run pre-cloud transforms, then stream the cloud response.
+
+        Tactics T1 (route-local), T3 (cache hit), and T4 (draft-review)
+        short-circuit and cannot stream — they fall back to a single
+        non-streaming chunk.  All other tactics transform the messages
+        before handing off to the cloud backend's ``stream()`` method.
+        """
+        # Run the synchronous pipeline path first.  If T1 routes locally
+        # or T3 hits cache, yield the full answer as a single chunk.
+        t_start = time.perf_counter()
+        trace: list[StageEvent] = []
+        auto_route = request.model_hint == "auto"
+        has_local = self.local is not None
+
+        # --- T1 route ---
+        if self.config.tactics.t1_route and has_local and auto_route:
+            route_result = await _route.apply(
+                request.messages,
+                local=self.local,
+                params=self.config.tactics.params.get("t1_route"),
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stop=request.stop,
+                seed=request.seed,
+                extra=request.extra,
+            )
+            trace.extend(route_result.events)
+            if route_result.local_reply is not None:
+                yield StreamChunk(
+                    delta=route_result.local_reply.content,
+                    done=True,
+                    finish_reason=route_result.local_reply.finish_reason,
+                    usage=route_result.local_reply.usage,
+                )
+                return
+
+        # --- T3 cache lookup ---
+        t3_active = (
+            self.config.tactics.t3_sem_cache
+            and has_local
+            and self.cache_store is not None
+            and auto_route
+        )
+        if t3_active:
+            cache_result = await _sem_cache.lookup(
+                request.messages,
+                local=self.local,
+                store=self.cache_store,
+                params=self.config.tactics.params.get("t3_sem_cache"),
+            )
+            trace.extend(cache_result.events)
+            if cache_result.hit and cache_result.entry is not None:
+                yield StreamChunk(
+                    delta=cache_result.entry.response,
+                    done=True,
+                    finish_reason=cache_result.entry.finish_reason,
+                )
+                return
+
+        # --- T2 compress, T6 intent, T5 diff, T7 batch ---
+        messages_for_backend = request.messages
+        if self.config.tactics.t2_compress and has_local and auto_route:
+            r = await _compress.apply(
+                messages_for_backend, local=self.local,
+                params=self.config.tactics.params.get("t2_compress"),
+            )
+            trace.extend(r.events)
+            messages_for_backend = r.messages
+        if self.config.tactics.t6_intent and has_local and auto_route:
+            r = await _intent.apply(
+                messages_for_backend, local=self.local,
+                params=self.config.tactics.params.get("t6_intent"),
+            )
+            trace.extend(r.events)
+            messages_for_backend = r.messages
+        if self.config.tactics.t5_diff and has_local and auto_route:
+            r = await _diff.apply(
+                messages_for_backend, local=self.local,
+                params=self.config.tactics.params.get("t5_diff"),
+            )
+            trace.extend(r.events)
+            messages_for_backend = r.messages
+        if self.config.tactics.t7_batch and auto_route:
+            r = _batch.apply(
+                messages_for_backend,
+                params=self.config.tactics.params.get("t7_batch"),
+            )
+            trace.extend(r.events)
+            messages_for_backend = r.messages
+
+        # --- Stream from cloud (skip T4 draft in streaming mode) ---
+        client = self.cloud if request.model_hint != "local" else self.local
+        if client is None:
+            raise PipelineError("no backend available for streaming")
+
+        chunks = await client.stream(
+            messages_for_backend,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stop=request.stop,
+            seed=request.seed,
+            extra=request.extra,
+        )
+        async for chunk in chunks:
+            yield chunk
 
     def _choose_backend(
         self, hint: ModelHint

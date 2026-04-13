@@ -5,14 +5,15 @@ natively (Claude Code, Cursor-via-MCP, Codex CLI MCP, etc.). Tool names
 follow the `<project>.<verb>` convention shared with the sibling
 `resilient-write` / `llm-redactor` projects (`.agent/memory/gotchas.md`).
 
-Stage 4 status
---------------
-- `split.complete` — runs the pipeline (T1 route when enabled).
+Tools
+-----
+- `split.complete` — runs the full pipeline (all enabled tactics).
 - `split.classify` — runs the T1 classifier only (no answer generated).
   Returns ``NOT_IMPLEMENTED`` when T1 is disabled or no local backend.
-- `split.cache_lookup` — **stub**. T3 is not implemented yet.
-- `split.stats` — aggregate metrics (real).
-- `split.config` — read-only config view (real).
+- `split.cache_lookup` — queries T3 semantic cache without writing.
+  Returns ``hit=False`` when T3 is disabled or no cache store.
+- `split.stats` — aggregate metrics since process start.
+- `split.config` — read-only config view.
 """
 
 from __future__ import annotations

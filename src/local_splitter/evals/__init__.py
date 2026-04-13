@@ -12,6 +12,7 @@ Quick start::
 """
 
 from .metrics import compute_summary, cost_estimate, routing_accuracy, token_savings_pct
+from .quality import JudgeVerdict, judge_quality, quality_summary
 from .report import comparison_table, to_csv, to_csv_string
 from .runner import TACTIC_SUBSETS, run_matrix, run_single
 from .types import (
@@ -26,6 +27,7 @@ from .types import (
 
 __all__ = [
     "TACTIC_SUBSETS",
+    "JudgeVerdict",
     "RunResult",
     "RunSummary",
     "SampleResult",
@@ -34,7 +36,9 @@ __all__ = [
     "comparison_table",
     "compute_summary",
     "cost_estimate",
+    "judge_quality",
     "load_workload",
+    "quality_summary",
     "routing_accuracy",
     "run_matrix",
     "run_single",
