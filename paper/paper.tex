@@ -479,10 +479,11 @@ extrapolated to production deployments.
   \item \textbf{Latency delta}: median, p95, and p99 over the workload.
     The splitter may be slower per-call (due to local classification)
     but cheaper overall.
-  \item \textbf{Quality delta}: blind pairwise preference from a
-    judge model~\cite{zheng2023judging} comparing splitter output to
-    baseline on 100 held-out samples per workload. Human spot-checks
-    validate the judge.
+  \item \textbf{Quality delta}: position-debiased pairwise preference
+    from the cloud model acting as judge~\cite{zheng2023judging},
+    comparing splitter output to baseline on all samples per workload.
+    Each pair is judged twice with swapped presentation order; only
+    consistent verdicts count.
 \end{itemize}
 
 \paragraph{Secondary metrics (per-tactic).}
@@ -646,6 +647,41 @@ four workloads:
   \item T2 (compresses complex-request context)
   \item T3 (marginal on single-pass; stronger with repetition)
 \end{enumerate}
+
+\subsection{Quality evaluation}
+
+Table~\ref{tab:quality} reports pairwise quality judgments for the two
+strongest subsets (T1 and T1+T2) against baseline, aggregated across
+all four workloads. The judge is the cloud model (Gemma~3 4B) with
+position debiasing: each pair is presented twice in swapped order, and
+only consistent verdicts count.
+
+\begin{table}[h]
+\centering
+\caption{Quality evaluation: judge-model pairwise verdicts for T1 and
+  T1+T2 vs.\ baseline (40 pairs each, all workloads combined). High
+  inconsistency reflects the 4B judge model's limited discrimination.}
+\label{tab:quality}
+\begin{tabular}{l r r r r r}
+\toprule
+Subset & Baseline & Treatment & Tie & Incon. & Errors \\
+\midrule
+T1      & 15 & 5 & 0 & 17 & 3 \\
+T1+T2   & 15 & 6 & 1 & 17 & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The baseline wins more consistent verdicts than the treatment on both
+subsets (15 vs.\ 5 for T1, 15 vs.\ 6 for T1+T2). This quality gap is
+concentrated on WL2 (explanation-heavy) and WL3 (chat), where T1 routes
+requests locally that genuinely benefit from the stronger cloud model.
+On WL4 (RAG-heavy), the treatment matches or exceeds baseline quality,
+likely because the local model's answers are adequate for
+retrieval-based summarization. The high inconsistency rate (17 of 40
+pairs) reflects the 4B judge model's limited ability to discriminate
+paired responses; a stronger judge or human evaluation would yield
+tighter estimates.
 
 \subsection{Minimum-viable local model size}
 
