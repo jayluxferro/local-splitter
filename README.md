@@ -82,6 +82,27 @@ Pick a preset based on your workload:
 | [`rag-heavy`](configs/rag-heavy.yaml) | T1+T2+T3+T4+T5 | 51% on RAG | Long-context workloads with retrieved chunks |
 | [`local-only-mcp`](configs/local-only-mcp.yaml) | T1+T2+T3+T5 | varies | MCP mode — agent is the cloud model |
 
+**Per-workload cloud token savings (%)** — evaluated with llama3.2:3b
+(local) and gemma3:4b (cloud), 10 samples per workload, mean of 2 runs:
+
+| Preset | WL1 (edit) | WL2 (explain) | WL3 (chat) | WL4 (RAG) | Avg |
+|--------|-----------|---------------|------------|-----------|-----|
+| `conservative` | 29% | 69% | 59% | 38% | 49% |
+| **`recommended`** | **45%** | **79%** | 57% | 44% | **56%** |
+| `max-savings` | 43% | **80%** | **60%** | 44% | **56%** |
+| `rag-heavy` | 29% | 72% | 59% | **51%** | 53% |
+
+Key observations:
+- `recommended` and `max-savings` tie on average (56%). The difference
+  is that `max-savings` adds T3 caching which compounds over repeated queries.
+- `rag-heavy` underperforms on non-RAG workloads because T4 (draft-review)
+  increases cloud input tokens on short-output requests.
+- `conservative` still saves 49% on average — start here if quality is
+  the top priority.
+- Quality evaluation shows baseline wins ~3x more judge verdicts than
+  treatment. The savings come at a measurable quality cost, concentrated
+  on explanation-heavy workloads. See the paper for details.
+
 ```sh
 # Copy a preset
 cp configs/recommended.yaml config.yaml
