@@ -38,7 +38,7 @@ workloads, supporting the conclusion that **tactic selection should be
 workload-aware**.
 
 Code, data, and trained evaluation harness are released under the
-MIT license at github.com/sperixlabs/local-splitter.
+MIT license at github.com/jayluxferro/local-splitter.
 
 ## Outline
 

@@ -60,9 +60,11 @@ config.yaml
 .resilient_write/
 CLAUDE.md
 FIRST_INSTRUCTION.md
-.agent/memory/user-profile.md
-.agent/memory/next-steps.md
-.agent/memory/MEMORY.md
+AGENT.md
+.agent/
+
+# Build output
+local-splitter-arxiv.zip
 
 # Misc
 git-push

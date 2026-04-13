@@ -3,7 +3,11 @@ name = "local-splitter"
 version = "0.1.0"
 description = "MCP shim that splits coding-agent LLM requests between a local small model and a cloud model using seven independently-togglable tactics."
 authors = [
-    { name = "Jay Lux Ferro", email = "jay@sperixlabs.org" }
+    { name = "Justice Owusu Agyemang", email = "jay@sperixlabs.org" },
+    { name = "Jerry John Kponyo", email = "jjkponyo.soe@knust.edu.gh" },
+    { name = "Elliot Amponsah", email = "eamponsah52@st.knust.edu.gh" },
+    { name = "Godfred Manu Addo Boakye", email = "gmaboakye@st.knust.edu.gh" },
+    { name = "Kwame Opuni-Boachie Obour Agyekum", email = "kooagyekum@knust.edu.gh" },
 ]
 requires-python = ">=3.12"
 readme = "README.md"
