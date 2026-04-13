@@ -1,0 +1,2 @@
+{"bytes":7396,"caller":"resilient-write","journal_id":"wj_be86c6849ee00c0f7386","mode":"create","path":"scripts/gen_figures.py","sha256":"7e13ed1e3f4a2da33450d0d698bfeca00ccffbe43c7d741ab1f3290f9cd503f0","ts":"2026-04-12T23:05:14Z"}
+{"bytes":9310,"caller":"resilient-write","journal_id":"wj_bf264fd7b9a84e2fe682","mode":"overwrite","path":"paper/bibliography.bib","sha256":"a9cf6cd78c84895695d396fcf5bdf52957dccc6c8cd027a5eb537879529a4ef0","ts":"2026-04-12T23:16:39Z"}

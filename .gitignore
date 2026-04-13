@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+env/
+.python-version.local
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Runtime state (created by local-splitter itself)
+.local_splitter/
+*.sqlite
+*.sqlite-*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Eval output (keep seed workloads under evals/workloads/)
+.local_splitter/eval/
+
+# LaTeX build artefacts (keep .bbl per gotcha)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.blg
+paper/*.synctex.gz
+paper/*.fls
+paper/*.fdb_latexmk
+
+# Misc
+git-push

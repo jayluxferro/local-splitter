@@ -1,0 +1,10 @@
+{"id": "wl3_001", "workload": "wl3", "messages": [{"role": "user", "content": "What is Python?"}], "labels": {"trivial": true}}
+{"id": "wl3_002", "workload": "wl3", "messages": [{"role": "user", "content": "How do I install pip?"}], "labels": {"trivial": true}}
+{"id": "wl3_003", "workload": "wl3", "messages": [{"role": "user", "content": "Explain the differences between REST and GraphQL APIs, with pros and cons for each approach."}], "labels": {"trivial": false}}
+{"id": "wl3_004", "workload": "wl3", "messages": [{"role": "user", "content": "What's a good name for a variable that holds a list of users?"}], "labels": {"trivial": true}}
+{"id": "wl3_005", "workload": "wl3", "messages": [{"role": "user", "content": "Design a database schema for a social media app that supports posts, comments, likes, follows, and direct messages. Include proper indexing strategy."}], "labels": {"trivial": false}}
+{"id": "wl3_006", "workload": "wl3", "messages": [{"role": "user", "content": "What does 'git rebase' do?"}], "labels": {"trivial": true}}
+{"id": "wl3_007", "workload": "wl3", "messages": [{"role": "user", "content": "Write a Python function that checks if a string is a palindrome."}], "labels": {"trivial": true}}
+{"id": "wl3_008", "workload": "wl3", "messages": [{"role": "user", "content": "Explain how garbage collection works in Python, including reference counting and the generational collector."}], "labels": {"trivial": false}}
+{"id": "wl3_009", "workload": "wl3", "messages": [{"role": "user", "content": "What's the difference between == and is in Python?"}], "labels": {"trivial": true}}
+{"id": "wl3_010", "workload": "wl3", "messages": [{"role": "user", "content": "Help me architect a microservices system for an e-commerce platform. Consider service boundaries, data ownership, inter-service communication, eventual consistency, and failure handling."}], "labels": {"trivial": false}}

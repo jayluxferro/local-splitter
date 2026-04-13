@@ -1,0 +1,29 @@
+# Eval config — uses Ollama for both local and cloud to avoid SSL issues.
+# Cloud = gemma3 (4B, stronger), Local = llama3.2:3b (3B, triage).
+version: 1
+
+models:
+  local:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: llama3.2:3b
+    embed_model: nomic-embed-text
+    num_ctx: 8192
+
+  cloud:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: gemma3
+    num_ctx: 8192
+
+pipeline:
+  t1_route:      { enabled: false, trivial_threshold: 0.8 }
+  t2_compress:   { enabled: false, ratio_target: 0.5 }
+  t3_sem_cache:  { enabled: false, similarity_threshold: 0.92, ttl: 86400 }
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }
+
+evaluation:
+  log_file: .local_splitter/runs.jsonl
