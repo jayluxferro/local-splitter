@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "local-splitter"
+type: software
+license: MIT
+repository-code: "https://github.com/jowusu837/local-splitter"
+url: "https://arxiv.org/abs/2604.12301"
+authors:
+  - family-names: Owusu Agyemang
+    given-names: Justice
+  - family-names: Kponyo
+    given-names: Jerry John
+  - family-names: Amponsah
+    given-names: Elliot
+  - family-names: Addo Boakye
+    given-names: Godfred Manu
+  - family-names: Obour Agyekum
+    given-names: Kwame Opuni-Boachie
+preferred-citation:
+  type: article
+  title: "Local-Splitter: A Measurement Study of Seven Tactics for Reducing Cloud LLM Token Usage on Coding-Agent Workloads"
+  authors:
+    - family-names: Owusu Agyemang
+      given-names: Justice
+    - family-names: Kponyo
+      given-names: Jerry John
+    - family-names: Amponsah
+      given-names: Elliot
+    - family-names: Addo Boakye
+      given-names: Godfred Manu
+    - family-names: Obour Agyekum
+      given-names: Kwame Opuni-Boachie
+  year: 2026
+  journal: "arXiv preprint arXiv:2604.12301"
+  url: "https://arxiv.org/abs/2604.12301"

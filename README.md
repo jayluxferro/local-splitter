@@ -1,5 +1,7 @@
 # local-splitter
 
+[![arXiv](https://img.shields.io/badge/arXiv-2604.12301-b31b1b.svg)](https://arxiv.org/abs/2604.12301)
+
 An MCP-compatible **outbound LLM request shim** that cuts cloud token usage
 by running a local small model (via Ollama or any OpenAI-compatible endpoint)
 as a *triage layer* in front of a frontier cloud model.
@@ -412,6 +414,23 @@ Every tactic must:
 - Emit a `StageEvent` for observability
 - Fail open on errors (pass request through unchanged)
 - Use `temperature=0` for deterministic classifier/extractor calls
+
+## Citation
+
+If you use local-splitter in your research, please cite:
+
+```bibtex
+@article{agyemang2026localsplitter,
+  title   = {Local-Splitter: A Measurement Study of Seven Tactics for
+             Reducing Cloud LLM Token Usage on Coding-Agent Workloads},
+  author  = {Owusu Agyemang, Justice and Kponyo, Jerry John and
+             Amponsah, Elliot and Addo Boakye, Godfred Manu and
+             Obour Agyekum, Kwame Opuni-Boachie},
+  journal = {arXiv preprint arXiv:2604.12301},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2604.12301}
+}
+```
 
 ## License
 
