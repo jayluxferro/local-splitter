@@ -30,6 +30,8 @@ class PipelineRequest:
     seed: int | None = None
     stream: bool = False
     extra: Mapping[str, Any] | None = None
+    # Headers to forward to the upstream backend (e.g. auth tokens).
+    upstream_headers: dict[str, str] = field(default_factory=dict)
     # Caller metadata: tool_name, session_id, tag, ...
     meta: dict[str, Any] = field(default_factory=dict)
     # Per-call tactics override; None means "use config".

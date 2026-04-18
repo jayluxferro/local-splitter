@@ -59,6 +59,7 @@ class FakeChatClient:
         stop: Sequence[str] | None = None,
         seed: int | None = None,
         extra: Mapping[str, Any] | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
     ) -> ChatResponse:
         self.calls.append(
             {

@@ -7,6 +7,7 @@ and `OpenAICompatClient` are the two concrete implementations; either
 may be configured as the local or the cloud model.
 """
 
+from .anthropic import AnthropicClient
 from .base import (
     ChatClient,
     ChatResponse,
@@ -21,6 +22,7 @@ from .ollama import OllamaClient
 from .openai_compat import OpenAICompatClient
 
 __all__ = [
+    "AnthropicClient",
     "ChatClient",
     "ChatResponse",
     "FinishReason",

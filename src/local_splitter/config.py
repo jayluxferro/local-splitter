@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import yaml
 
-Backend = Literal["ollama", "openai_compat"]
+Backend = Literal["ollama", "openai_compat", "anthropic"]
 
 
 class ConfigError(ValueError):
@@ -44,8 +44,8 @@ class ModelConfig:
         if missing:
             raise ConfigError(f"{where}: missing required keys {missing}")
         backend = data["backend"]
-        if backend not in ("ollama", "openai_compat"):
-            raise ConfigError(f"{where}: backend must be 'ollama' or 'openai_compat'")
+        if backend not in ("ollama", "openai_compat", "anthropic"):
+            raise ConfigError(f"{where}: backend must be 'ollama', 'openai_compat', or 'anthropic'")
         return cls(
             backend=backend,
             endpoint=str(data["endpoint"]),

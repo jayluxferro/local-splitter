@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from local_splitter.config import ModelConfig
 
+from .anthropic import AnthropicClient
 from .base import ChatClient
 from .ollama import OllamaClient
 from .openai_compat import OpenAICompatClient
@@ -25,6 +26,13 @@ def build_chat_client(mc: ModelConfig) -> ChatClient:
         )
     if mc.backend == "openai_compat":
         return OpenAICompatClient(
+            chat_model=mc.chat_model,
+            embed_model=mc.embed_model,
+            endpoint=mc.endpoint,
+            api_key_env=mc.api_key_env,
+        )
+    if mc.backend == "anthropic":
+        return AnthropicClient(
             chat_model=mc.chat_model,
             embed_model=mc.embed_model,
             endpoint=mc.endpoint,

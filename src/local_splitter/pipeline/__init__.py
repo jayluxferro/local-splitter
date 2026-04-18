@@ -326,6 +326,7 @@ class Pipeline:
                 stop=request.stop,
                 seed=request.seed,
                 extra=request.extra,
+                upstream_headers=request.upstream_headers or None,
             )
         except ModelBackendError as e:
             elapsed = (time.perf_counter() - stage_start) * 1000
@@ -569,6 +570,7 @@ class Pipeline:
             stop=request.stop,
             seed=request.seed,
             extra=request.extra,
+            upstream_headers=request.upstream_headers or None,
         )
         async for chunk in chunks:
             yield chunk

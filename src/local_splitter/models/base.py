@@ -110,6 +110,7 @@ class ChatClient(Protocol):
         stop: Sequence[str] | None = None,
         seed: int | None = None,
         extra: Mapping[str, Any] | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
     ) -> ChatResponse: ...
 
     async def stream(
@@ -122,6 +123,7 @@ class ChatClient(Protocol):
         stop: Sequence[str] | None = None,
         seed: int | None = None,
         extra: Mapping[str, Any] | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[StreamChunk]: ...
 
     async def embed(

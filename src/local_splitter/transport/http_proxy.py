@@ -33,12 +33,20 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
+import httpx
+
 from local_splitter import __version__
 from local_splitter.config import Config
 from local_splitter.models import ModelBackendError
 from local_splitter.pipeline import Pipeline, PipelineError, PipelineRequest
 
 _log = logging.getLogger(__name__)
+
+# Headers that should not be forwarded between pipeline hops.
+_HOP_HEADERS = frozenset({
+    "host", "transfer-encoding", "connection",
+    "content-length", "content-encoding", "anthropic-beta",
+})
 
 
 def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
@@ -150,6 +158,20 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body must be a JSON object")
 
+        # Forward all headers from the incoming request (minus hop-by-hop).
+        upstream_headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in _HOP_HEADERS
+        }
+
+        # Transparent proxy bypass: when the request uses tools, the
+        # pipeline can't represent tool_use / tool_result blocks, so
+        # forward the raw request to the upstream unchanged.
+        if "tools" in body and config.cloud is not None:
+            return await _transparent_proxy(
+                body, config.cloud.endpoint, upstream_headers,
+            )
+
         messages = _anthropic_to_pipeline_messages(body)
         if not messages:
             raise HTTPException(status_code=400, detail="messages must be non-empty")
@@ -161,6 +183,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             max_tokens=body.get("max_tokens"),
             stop=body.get("stop_sequences"),
             stream=bool(body.get("stream")),
+            upstream_headers=upstream_headers,
             meta={"model_requested": body.get("model")},
         )
 
@@ -189,6 +212,52 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     return app
+
+
+async def _transparent_proxy(
+    body: dict[str, Any],
+    upstream_endpoint: str,
+    headers: dict[str, str],
+) -> StreamingResponse | JSONResponse:
+    """Bypass the pipeline — forward the raw request/response unchanged.
+
+    Used for tool-bearing requests that the pipeline can't represent.
+    """
+    url = f"{upstream_endpoint.rstrip('/')}/v1/messages"
+    is_stream = body.get("stream", False)
+
+    _log.debug("transparent proxy → %s (stream=%s)", url, is_stream)
+
+    if is_stream:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+
+        async def stream_and_close():
+            try:
+                async with client.stream("POST", url, json=body, headers=headers) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+            finally:
+                await client.aclose()
+
+        return StreamingResponse(
+            stream_and_close(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        resp = await client.post(url, json=body, headers=headers)
+
+    resp_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
+    }
+    from starlette.responses import Response
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers=resp_headers,
+    )
 
 
 async def _sse_generator(
