@@ -183,7 +183,11 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                     msgs_for_tools, tactics_override=tact_ov,
                 )
                 body = {**body, "messages": compressed}
-            if config.local is not None and config.local.backend == "ollama":
+            if (
+                not config.tactics.tools_require_cloud
+                and config.local is not None
+                and config.local.backend == "ollama"
+            ):
                 try:
                     return await _local_openai_tool_proxy(body, config.local, upstream_headers)
                 except Exception as exc:
@@ -325,7 +329,11 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         # tool_use / tool_result blocks) and go directly to a backend.
         # Try local ollama first (if available), fall back to cloud.
         if "tools" in body:
-            if config.local is not None and config.local.backend == "ollama":
+            if (
+                not config.tactics.tools_require_cloud
+                and config.local is not None
+                and config.local.backend == "ollama"
+            ):
                 try:
                     return await _local_tool_proxy(
                         body, config.local, upstream_headers,

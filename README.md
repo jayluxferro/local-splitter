@@ -1,5 +1,6 @@
 # local-splitter
 
+[![CI](https://github.com/jayluxferro/local-splitter/actions/workflows/ci.yml/badge.svg)](https://github.com/jayluxferro/local-splitter/actions/workflows/ci.yml)
 [![arXiv](https://img.shields.io/badge/arXiv-2604.12301-b31b1b.svg)](https://arxiv.org/abs/2604.12301)
 
 An MCP-compatible **outbound LLM request shim** that cuts cloud token usage
@@ -339,6 +340,33 @@ Override the pipeline per-request:
 
 **T3 privacy / routing knobs** (all under `pipeline.t3_sem_cache` in YAML): `skip_cache_for_tools`, `cache_namespace_from_meta`, `never_cache_regex`. **T1** extras: `verify_trivial`, `force_complex_tools`, `force_complex_tags`, `min_user_chars`.
 
+### Local tool routing
+
+Tool-bearing requests (requests with `tools` or `functions`) bypass the
+tactic pipeline (which can't represent `tool_calls`/`tool` role messages)
+and go directly to a backend.
+
+By default, tool requests are forwarded to the **cloud** backend. To try
+the **local Ollama** backend first (with automatic fail-open to cloud),
+set:
+
+```yaml
+pipeline:
+  tools_require_cloud: false
+```
+
+When `tools_require_cloud: false`:
+- **OpenAI surface** (`/v1/chat/completions`): converts tools to
+  Ollama's OpenAI-compatible format, calls local, falls back to cloud
+  on error.
+- **Anthropic surface** (`/v1/messages`): converts Anthropic tool
+  definitions and messages to Ollama format, calls local, falls back
+  to cloud on error.
+
+The default `true` is the safer choice — local models may not support
+all tool schemas reliably. Set to `false` when your local model handles
+tools well and you want to save cloud tokens on tool calls.
+
 ## Evaluation
 
 The evaluation harness measures per-tactic and per-combination savings across
@@ -393,8 +421,8 @@ Results land in `.local_splitter/eval/`:
 
 ```
 src/local_splitter/
-├── cli.py                  # Typer CLI (serve-http, serve-mcp, eval)
-├── config.py               # YAML config loader
+├── cli.py                  # Typer CLI (serve-http, serve-mcp, eval, demo)
+├── config.py               # YAML config loader + apply_tactics_override
 ├── models/                 # Backend implementations
 │   ├── base.py             #   ChatClient protocol + data types
 │   ├── ollama.py           #   Ollama native API client
@@ -402,7 +430,8 @@ src/local_splitter/
 │   └── factory.py          #   Build client from config
 ├── pipeline/               # The seven tactics + orchestrator
 │   ├── __init__.py         #   Pipeline orchestrator
-│   ├── types.py            #   PipelineRequest/Response, StageEvent
+│   ├── pre_cloud.py        #   Shared pre-cloud stages (T1→T3→T2→T6→T5→T7)
+│   ├── types.py            #   PipelineRequest/Response, StageEvent, StatsSnapshot
 │   ├── route.py            #   T1 — local classifier
 │   ├── compress.py         #   T2 — prompt compression
 │   ├── sem_cache.py        #   T3 — semantic cache (sqlite-vec)
@@ -410,8 +439,10 @@ src/local_splitter/
 │   ├── diff.py             #   T5 — minimal diff extraction
 │   ├── intent.py           #   T6 — intent extraction
 │   └── batch.py            #   T7 — prompt-cache tagging
+├── plugins/                # Extension point for third-party hooks
+│   └── __init__.py         #   TacticHook protocol (see docs/EXTENSIONS.md)
 ├── transport/              # External interfaces
-│   ├── http_proxy.py       #   FastAPI OpenAI-compat proxy
+│   ├── http_proxy.py       #   FastAPI proxy (OpenAI + Anthropic + tool routing)
 │   └── mcp_server.py       #   FastMCP stdio server
 └── evals/                  # Evaluation harness
     ├── types.py            #   WorkloadSample, SampleResult, RunResult
@@ -420,8 +451,11 @@ src/local_splitter/
     ├── quality.py          #   Judge-model pairwise quality evaluation
     └── report.py           #   CSV + markdown export
 
+schemas/mcp-tools.json      # JSON Schema for MCP tool arguments
+scripts/trace_report.py     # HTML summary from eval JSONL traces
+examples/openai_chat.sh     # Minimal curl example for the proxy
 evals/workloads/            # Evaluation datasets (JSONL)
-tests/                      # 175 tests
+tests/                      # 191 tests
 ```
 
 ## Development
@@ -468,11 +502,15 @@ MIT
 
 ## Status
 
-- [x] Python scaffold (uv, package skeleton, 175 tests)
+- [x] Python scaffold (uv, package skeleton, 191 tests)
 - [x] Model backends (Ollama + OpenAI-compatible)
 - [x] Transport layer (MCP stdio + HTTP proxy: OpenAI + Anthropic)
 - [x] Streaming support (SSE, both API surfaces)
+- [x] Local tool routing (Ollama, both API surfaces, fail-open to cloud)
 - [x] All seven tactics implemented and tested
+- [x] Per-request tactic overrides, compress-with-tools, adaptive hints
+- [x] Plugin system (`TacticHook` protocol) and extension points
+- [x] CI pipeline (GitHub Actions: lint + test)
 - [x] Evaluation harness (runner, metrics, quality judge, CSV/markdown)
 - [x] CLI eval command + seed workloads (4 classes, 40 samples)
 - [x] Evaluation with real numbers (Ollama llama3.2:3b + gemma3)

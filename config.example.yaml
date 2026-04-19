@@ -42,6 +42,9 @@ pipeline:
   t5_diff:       { enabled: false }
   t6_intent:     { enabled: false }
   t7_batch:      { enabled: false }
+  # When true (default), tool-bearing requests always go to the cloud backend.
+  # Set to false to try local Ollama first (with automatic fail-open to cloud).
+  tools_require_cloud: true
 
 # Optional: hints in GET /v1/splitter/stats when local+cache share is very high.
 adaptive:

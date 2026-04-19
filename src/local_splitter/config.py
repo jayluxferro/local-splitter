@@ -98,6 +98,7 @@ class TacticsConfig:
     t5_diff: bool = False
     t6_intent: bool = False
     t7_batch: bool = False
+    tools_require_cloud: bool = True
     params: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -132,6 +133,7 @@ class TacticsConfig:
             t5_diff=enabled("t5_diff"),
             t6_intent=enabled("t6_intent"),
             t7_batch=enabled("t7_batch"),
+            tools_require_cloud=bool(data.get("tools_require_cloud", True)),
             params=params,
         )
 

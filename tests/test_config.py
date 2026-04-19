@@ -218,6 +218,17 @@ def test_apply_tactics_override_disables_named_stages() -> None:
     assert u.t3_sem_cache is False
 
 
+def test_tools_require_cloud_defaults_true() -> None:
+    c = Config.from_dict(VALID_MIN)
+    assert c.tactics.tools_require_cloud is True
+
+
+def test_tools_require_cloud_explicit_false() -> None:
+    data = {**VALID_MIN, "pipeline": {"tools_require_cloud": False}}
+    c = Config.from_dict(data)
+    assert c.tactics.tools_require_cloud is False
+
+
 def test_apply_tactics_override_ignores_unknown() -> None:
     t = TacticsConfig(t1_route=True)
     u = apply_tactics_override(t, frozenset({"not_a_tactic"}))
