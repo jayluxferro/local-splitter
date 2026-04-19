@@ -69,6 +69,26 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body must be a JSON object")
 
+        # Forward all headers from the incoming request (minus hop-by-hop).
+        upstream_headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in _HOP_HEADERS
+        }
+
+        # Tool-bearing requests bypass the pipeline (which can't represent
+        # tool_calls / tool role messages) and go directly to a backend.
+        # Try local ollama first, fall back to cloud transparent proxy.
+        if "tools" in body or "functions" in body:
+            if config.local is not None and config.local.backend == "ollama":
+                try:
+                    return await _local_openai_tool_proxy(body, config.local)
+                except Exception as exc:
+                    _log.warning("local openai tool proxy failed, falling back to cloud: %s", exc)
+            if config.cloud is not None:
+                return await _transparent_openai_proxy(
+                    body, config.cloud.endpoint, upstream_headers,
+                )
+
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise HTTPException(
@@ -91,6 +111,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             stop=body.get("stop"),
             seed=body.get("seed"),
             stream=bool(body.get("stream")),
+            upstream_headers=upstream_headers,
             meta={
                 "tool_name": splitter_opts.get("tool_name"),
                 "tag": splitter_opts.get("tag"),
@@ -447,6 +468,104 @@ async def _local_tool_proxy(
     data = resp.json()
     anthropic_resp = _openai_response_to_anthropic(data, body.get("model"))
     return JSONResponse(content=anthropic_resp)
+
+
+async def _local_openai_tool_proxy(
+    body: dict[str, Any],
+    local_config: "Config.local.__class__",
+) -> JSONResponse:
+    """Route an OpenAI-format tool request to local ollama.
+
+    OpenAI and Ollama share the same tool format, so no conversion needed —
+    just forward to ollama's /api/chat endpoint.
+    """
+    ollama_body: dict[str, Any] = {
+        "model": local_config.chat_model,
+        "messages": body.get("messages", []),
+        "stream": False,
+    }
+    if "tools" in body:
+        ollama_body["tools"] = body["tools"]
+    if "functions" in body:
+        ollama_body["functions"] = body["functions"]
+    if "tool_choice" in body:
+        ollama_body["tool_choice"] = body["tool_choice"]
+    if body.get("temperature") is not None:
+        ollama_body["options"] = {"temperature": body["temperature"]}
+
+    url = f"{local_config.endpoint.rstrip('/')}/api/chat"
+    _log.debug("local openai tool proxy → %s", url)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        resp = await client.post(url, json=ollama_body)
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"ollama returned {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    message = data.get("message", {})
+
+    # Build OpenAI-compatible response from ollama response.
+    return JSONResponse({
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": body.get("model", data.get("model", "")),
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+        }],
+        "usage": {
+            "prompt_tokens": data.get("prompt_eval_count", 0),
+            "completion_tokens": data.get("eval_count", 0),
+            "total_tokens": (data.get("prompt_eval_count", 0)
+                             + data.get("eval_count", 0)),
+        },
+    })
+
+
+async def _transparent_openai_proxy(
+    body: dict[str, Any],
+    upstream_endpoint: str,
+    headers: dict[str, str],
+) -> StreamingResponse | JSONResponse:
+    """Bypass the pipeline — forward the raw OpenAI request/response unchanged."""
+    url = f"{upstream_endpoint.rstrip('/')}/v1/chat/completions"
+    is_stream = body.get("stream", False)
+
+    _log.debug("transparent openai proxy → %s (stream=%s)", url, is_stream)
+
+    if is_stream:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+
+        async def stream_and_close():
+            try:
+                async with client.stream("POST", url, json=body, headers=headers) as resp:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+            finally:
+                await client.aclose()
+
+        return StreamingResponse(
+            stream_and_close(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        resp = await client.post(url, json=body, headers=headers)
+
+    resp_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
+    }
+    from starlette.responses import Response
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers=resp_headers,
+    )
 
 
 async def _sse_generator(
