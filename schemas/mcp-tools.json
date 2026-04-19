@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-splitter.dev/schemas/mcp-tools.json",
+  "title": "local-splitter MCP tool arguments",
+  "description": "Argument objects keyed by tool name (FastMCP / serve-mcp). See src/local_splitter/transport/mcp_server.py.",
+  "type": "object",
+  "definitions": {
+    "message": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": { "type": "string", "enum": ["system", "user", "assistant", "tool"] },
+        "content": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "tactics_disable": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "t1_route",
+          "t2_compress",
+          "t3_sem_cache",
+          "t4_draft",
+          "t5_diff",
+          "t6_intent",
+          "t7_batch"
+        ]
+      }
+    },
+    "split_complete": {
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array", "items": { "$ref": "#/definitions/message" }, "minItems": 1 },
+        "model_hint": { "type": "string", "enum": ["auto", "local", "cloud"], "default": "auto" },
+        "temperature": { "type": ["number", "null"] },
+        "max_tokens": { "type": ["integer", "null"] },
+        "seed": { "type": ["integer", "null"] },
+        "session_id": { "type": ["string", "null"] },
+        "tool_name": { "type": ["string", "null"] },
+        "tag": { "type": ["string", "null"] },
+        "tactics_disable": { "$ref": "#/definitions/tactics_disable" }
+      },
+      "required": ["messages"]
+    },
+    "split_transform": {
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array", "items": { "$ref": "#/definitions/message" }, "minItems": 1 },
+        "temperature": { "type": ["number", "null"] },
+        "max_tokens": { "type": ["integer", "null"] },
+        "session_id": { "type": ["string", "null"] },
+        "tool_name": { "type": ["string", "null"] },
+        "tag": { "type": ["string", "null"] },
+        "tactics_disable": { "$ref": "#/definitions/tactics_disable" }
+      },
+      "required": ["messages"]
+    },
+    "split_classify": {
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array", "items": { "$ref": "#/definitions/message" }, "minItems": 1 }
+      },
+      "required": ["messages"]
+    },
+    "split_cache_lookup": {
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array", "items": { "$ref": "#/definitions/message" }, "minItems": 1 },
+        "meta": {
+          "type": "object",
+          "description": "Optional metadata (e.g. tool_name, tag, session_id) for T3 skip/namespace rules.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["messages"]
+    },
+    "split_stats": { "type": "object", "additionalProperties": false },
+    "split_config": { "type": "object", "additionalProperties": false }
+  },
+  "properties": {
+    "split.complete": { "$ref": "#/definitions/split_complete" },
+    "split.transform": { "$ref": "#/definitions/split_transform" },
+    "split.classify": { "$ref": "#/definitions/split_classify" },
+    "split.cache_lookup": { "$ref": "#/definitions/split_cache_lookup" },
+    "split.stats": { "$ref": "#/definitions/split_stats" },
+    "split.config": { "$ref": "#/definitions/split_config" }
+  },
+  "additionalProperties": false
+}

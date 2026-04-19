@@ -344,3 +344,35 @@ async def test_t3_hit_bypasses_t2(tmp_path: Path) -> None:
     assert resp2.served_by == "cache"
     assert not any(e.stage == "t2_compress" for e in resp2.trace)
     store.close()
+
+
+async def test_compress_messages_only_runs_t2() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_content="z" * 50,
+        usage=Usage(input_tokens=10, output_tokens=5),
+    )
+    cloud = FakeChatClient(chat_model="cloud-m")
+    cfg = _config(t2=True, min_length=10)
+    pipeline = Pipeline(cloud=cloud, local=local, config=cfg)
+    msgs = [{"role": "system", "content": LONG_SYSTEM}]
+    out, trace = await pipeline.compress_messages_only(msgs)
+    assert trace and trace[0].stage == "t2_compress"
+    assert isinstance(out, list)
+
+
+async def test_compress_messages_only_respects_tactics_override() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_content="z" * 50,
+        usage=Usage(input_tokens=10, output_tokens=5),
+    )
+    cloud = FakeChatClient(chat_model="cloud-m")
+    cfg = _config(t2=True, min_length=10)
+    pipeline = Pipeline(cloud=cloud, local=local, config=cfg)
+    msgs = [{"role": "system", "content": LONG_SYSTEM}]
+    out, trace = await pipeline.compress_messages_only(
+        msgs, tactics_override=frozenset({"t2_compress"})
+    )
+    assert trace == []
+    assert out == msgs

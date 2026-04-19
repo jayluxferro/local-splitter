@@ -48,6 +48,25 @@ def _client(
     return TestClient(app), cloud, local
 
 
+def test_list_models_local_only_config() -> None:
+    """MCP-style config with no cloud must not crash /v1/models."""
+    local = FakeChatClient(chat_model="llama3.2:3b")
+    cfg = Config(
+        cloud=None,
+        local=ModelConfig(
+            backend="ollama", endpoint="http://local", chat_model="llama3.2:3b"
+        ),
+        tactics=TacticsConfig(),
+    )
+    pipeline = Pipeline(cloud=None, local=local, config=cfg)
+    app = create_app(pipeline, cfg)
+    client = TestClient(app)
+    r = client.get("/v1/models")
+    assert r.status_code == 200
+    ids = [m["id"] for m in r.json()["data"]]
+    assert "llama3.2:3b" in ids
+
+
 def test_chat_completions_happy_path() -> None:
     client, cloud, _ = _client()
     r = client.post(
@@ -310,3 +329,42 @@ def test_force_local_without_local_backend_returns_400() -> None:
     )
     assert r.status_code == 400
     assert "local" in r.json()["detail"].lower()
+
+
+def test_anthropic_string_only_chain_roundtrip() -> None:
+    from local_splitter.transport.http_proxy import (
+        _anthropic_apply_string_chain,
+        _anthropic_string_only_chain,
+    )
+
+    body = {
+        "model": "x",
+        "max_tokens": 10,
+        "system": "sys",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    chain = _anthropic_string_only_chain(body)
+    assert chain == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+    ]
+    compressed = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "H"},
+    ]
+    nb = _anthropic_apply_string_chain(body, compressed)
+    assert nb is not None
+    assert nb["system"] == "S"
+    assert nb["messages"][0]["content"] == "H"
+
+
+def test_parse_tactics_override() -> None:
+    from local_splitter.transport.http_proxy import _parse_tactics_override
+
+    assert _parse_tactics_override({"disable_tactics": ["t2_compress"]}) == frozenset(
+        {"t2_compress"}
+    )
+    assert _parse_tactics_override(
+        {"disable_tactics": "t1_route, t7_batch "}
+    ) == frozenset({"t1_route", "t7_batch"})
+    assert _parse_tactics_override({}) is None

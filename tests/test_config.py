@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 
 from local_splitter.config import (
+    AdaptiveConfig,
     Config,
     ConfigError,
     ModelConfig,
     TacticsConfig,
+    apply_tactics_override,
     load_config,
 )
 
@@ -83,7 +85,7 @@ def test_from_dict_full_config() -> None:
 
 
 def test_missing_cloud_raises() -> None:
-    with pytest.raises(ConfigError, match="models.cloud"):
+    with pytest.raises(ConfigError, match="at least one"):
         Config.from_dict({"version": 1, "models": {}})
 
 
@@ -183,3 +185,40 @@ def test_model_config_defaults() -> None:
     assert mc.num_ctx == 8192
     assert mc.embed_model is None
     assert mc.api_key_env is None
+
+
+def test_adaptive_config_from_dict() -> None:
+    raw = {
+        **VALID_MIN,
+        "adaptive": {"enabled": True, "min_requests": 10, "max_local_fraction": 0.3},
+    }
+    c = Config.from_dict(raw)
+    assert c.adaptive.enabled is True
+    assert c.adaptive.min_requests == 10
+    assert c.adaptive.max_local_fraction == 0.3
+
+
+def test_adaptive_config_defaults() -> None:
+    assert AdaptiveConfig().enabled is False
+
+
+def test_apply_tactics_override_disables_named_stages() -> None:
+    t = TacticsConfig(
+        t1_route=True,
+        t2_compress=True,
+        t3_sem_cache=True,
+        t4_draft=False,
+        t5_diff=False,
+        t6_intent=False,
+        t7_batch=False,
+    )
+    u = apply_tactics_override(t, frozenset({"t2_compress", "t3_sem_cache"}))
+    assert u.t1_route is True
+    assert u.t2_compress is False
+    assert u.t3_sem_cache is False
+
+
+def test_apply_tactics_override_ignores_unknown() -> None:
+    t = TacticsConfig(t1_route=True)
+    u = apply_tactics_override(t, frozenset({"not_a_tactic"}))
+    assert u is t

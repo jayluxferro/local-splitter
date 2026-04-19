@@ -204,6 +204,61 @@ async def test_apply_forwards_generation_params() -> None:
     assert answer_call["seed"] == 42
 
 
+async def test_apply_force_complex_tool_name() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_sequence=["TRIVIAL", "should-not-run"],
+    )
+    result = await apply(
+        _MSGS,
+        local=local,
+        params={"force_complex_tools": ["Edit"]},
+        meta={"tool_name": "Edit"},
+    )
+    assert result.classification == "COMPLEX"
+    assert result.local_reply is None
+    assert len(local.calls) == 0
+    assert result.events[0].decision == "FORCED_COMPLEX"
+
+
+async def test_apply_verify_trivial_requires_second_trivial() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_sequence=["TRIVIAL", "TRIVIAL", "final answer"],
+    )
+    result = await apply(_MSGS, local=local, params={"verify_trivial": True})
+    assert result.classification == "TRIVIAL"
+    assert result.local_reply is not None
+    assert len(local.calls) == 3
+
+
+async def test_apply_verify_trivial_mismatch_falls_back() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_sequence=["TRIVIAL", "COMPLEX"],
+    )
+    result = await apply(_MSGS, local=local, params={"verify_trivial": True})
+    assert result.classification == "COMPLEX"
+    assert result.local_reply is None
+    assert len(local.calls) == 2
+
+
+async def test_apply_trivial_threshold_triggers_second_vote() -> None:
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_sequence=["TRIVIAL", "TRIVIAL", "final"],
+        usage=Usage(input_tokens=5, output_tokens=2),
+    )
+    result = await apply(
+        _MSGS,
+        local=local,
+        params={"trivial_threshold": 0.8},
+    )
+    assert result.classification == "TRIVIAL"
+    assert result.local_reply is not None
+    assert len(local.calls) == 3
+
+
 # ---------------------------------------------------------------------------
 # Integration: Pipeline.complete with T1 enabled
 # ---------------------------------------------------------------------------
@@ -344,3 +399,31 @@ async def test_pipeline_t1_stats_count_locally_routed() -> None:
     assert snap.tokens_in_local == 5
     assert snap.tokens_out_local == 2
     assert snap.tokens_in_cloud == 0
+
+
+async def test_pipeline_adaptive_stats_hint() -> None:
+    from local_splitter.config import AdaptiveConfig
+
+    base = _t1_config()
+    cfg = Config(
+        cloud=base.cloud,
+        local=base.local,
+        tactics=base.tactics,
+        adaptive=AdaptiveConfig(
+            enabled=True,
+            min_requests=1,
+            max_local_fraction=0.2,
+        ),
+    )
+    local = FakeChatClient(
+        chat_model="local-m",
+        reply_sequence=["TRIVIAL", "a"],
+        usage=Usage(input_tokens=5, output_tokens=2),
+    )
+    cloud = FakeChatClient(chat_model="cloud-m")
+    pipeline = Pipeline(cloud=cloud, local=local, config=cfg)
+
+    await pipeline.complete(PipelineRequest(messages=_MSGS))
+    snap = pipeline.stats()
+    assert snap.latency_sample_size >= 1
+    assert len(snap.adaptive_hints) == 1

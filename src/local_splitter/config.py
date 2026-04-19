@@ -14,11 +14,22 @@ tasks. If you need to mutate something, build a new Config.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+
+# Per-request ``PipelineRequest.tactics_override`` uses these names to *disable* tactics.
+TACTIC_DISABLE_NAMES = frozenset({
+    "t1_route",
+    "t2_compress",
+    "t3_sem_cache",
+    "t4_draft",
+    "t5_diff",
+    "t6_intent",
+    "t7_batch",
+})
 
 Backend = Literal["ollama", "openai_compat", "anthropic"]
 
@@ -138,6 +149,58 @@ class TacticsConfig:
         )
 
 
+def apply_tactics_override(
+    tactics: TacticsConfig, override: frozenset[str] | None
+) -> TacticsConfig:
+    """Return a tactics view with listed tactic names forced off.
+
+    Unknown names in ``override`` are ignored. ``None`` or empty means no change.
+    """
+    if not override:
+        return tactics
+    o = frozenset(x for x in override if x in TACTIC_DISABLE_NAMES)
+    if not o:
+        return tactics
+    return replace(
+        tactics,
+        t1_route=tactics.t1_route and "t1_route" not in o,
+        t2_compress=tactics.t2_compress and "t2_compress" not in o,
+        t3_sem_cache=tactics.t3_sem_cache and "t3_sem_cache" not in o,
+        t4_draft=tactics.t4_draft and "t4_draft" not in o,
+        t5_diff=tactics.t5_diff and "t5_diff" not in o,
+        t6_intent=tactics.t6_intent and "t6_intent" not in o,
+        t7_batch=tactics.t7_batch and "t7_batch" not in o,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveConfig:
+    """Optional hints in ``/v1/splitter/stats`` when routing skews very local."""
+
+    enabled: bool = False
+    min_requests: int = 20
+    max_local_fraction: float = 0.45
+    hint: str = (
+        "Local/cache fraction is high vs total requests. Consider enabling "
+        "t1_route.verify_trivial, raising min_user_chars, or using a conservative preset."
+    )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> AdaptiveConfig:
+        if not data:
+            return cls()
+        default = (
+            "Local/cache fraction is high vs total requests. Consider enabling "
+            "t1_route.verify_trivial, raising min_user_chars, or using a conservative preset."
+        )
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            min_requests=int(data.get("min_requests", 20)),
+            max_local_fraction=float(data.get("max_local_fraction", 0.45)),
+            hint=str(data.get("hint", default)),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Config:
     """Top-level config shared across both transports and the pipeline."""
@@ -146,6 +209,7 @@ class Config:
     local: ModelConfig | None = None
     transport: TransportConfig = field(default_factory=TransportConfig)
     tactics: TacticsConfig = field(default_factory=TacticsConfig)
+    adaptive: AdaptiveConfig = field(default_factory=AdaptiveConfig)
     log_file: Path | None = None
     version: int = 1
 
@@ -173,6 +237,7 @@ class Config:
 
         transport = TransportConfig.from_dict(data.get("transport") or {})
         tactics = TacticsConfig.from_dict(data.get("pipeline") or {})
+        adaptive = AdaptiveConfig.from_dict(data.get("adaptive"))
         log_file_raw = (data.get("evaluation") or {}).get("log_file")
         log_file = Path(log_file_raw) if log_file_raw else None
 
@@ -181,6 +246,7 @@ class Config:
             local=local,
             transport=transport,
             tactics=tactics,
+            adaptive=adaptive,
             log_file=log_file,
             version=version,
         )
@@ -230,11 +296,14 @@ def load_config(path: Path | str | None = None) -> Config:
 
 
 __all__ = [
+    "AdaptiveConfig",
     "Backend",
     "Config",
     "ConfigError",
     "ModelConfig",
+    "TACTIC_DISABLE_NAMES",
     "TacticsConfig",
     "TransportConfig",
+    "apply_tactics_override",
     "load_config",
 ]

@@ -34,7 +34,8 @@ class PipelineRequest:
     upstream_headers: dict[str, str] = field(default_factory=dict)
     # Caller metadata: tool_name, session_id, tag, ...
     meta: dict[str, Any] = field(default_factory=dict)
-    # Per-call tactics override; None means "use config".
+    # Per-call: frozenset of tactic keys to *disable* for this request only
+    # (e.g. frozenset({"t2_compress"})); see ``apply_tactics_override`` in config.
     tactics_override: frozenset[str] | None = None
 
 
@@ -96,6 +97,10 @@ class StatsSnapshot:
     tokens_out_local: int
     p50_latency_ms: float | None
     p99_latency_ms: float | None
+    # How many latency samples were used for p50/p99 (may be subsampled).
+    latency_sample_size: int = 0
+    # Optional hints when ``Config.adaptive`` is enabled (e.g. high local rate).
+    adaptive_hints: tuple[str, ...] = ()
 
 
 __all__ = [

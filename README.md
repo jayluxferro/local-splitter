@@ -207,9 +207,11 @@ The agent can then call these MCP tools:
 | `split.transform` | Run tactics, return local answer or transformed prompt |
 | `split.complete` | Full pipeline (auto-detects local-only mode) |
 | `split.classify` | T1 classifier only — TRIVIAL or COMPLEX |
-| `split.cache_lookup` | Check T3 cache without writing |
+| `split.cache_lookup` | Check T3 cache without writing (optional `meta` for T3 skip/namespace rules) |
 | `split.stats` | Aggregate metrics since startup |
 | `split.config` | Read-only config view |
+
+`split.complete` / `split.transform` accept optional **`tactics_disable`**: a list of tactic keys to turn off for that call only (same names as `disable_tactics` below).
 
 **How `split.transform` works:**
 
@@ -308,6 +310,34 @@ Override the pipeline per-request:
 {"model_hint": "local"}
 {"model_hint": "cloud"}
 ```
+
+### Per-request tactics, tools, and T1 threshold
+
+**Disable tactics for one request** (same names as `pipeline:` YAML keys):
+
+```python
+# OpenAI — extra_body.splitter
+{"extra_body": {"splitter": {"disable_tactics": ["t2_compress", "t3_sem_cache"]}}}
+
+# Anthropic — top-level splitter object on the JSON body
+{"splitter": {"disable_tactics": ["t1_route"]}, "model": "...", "messages": [...]}
+```
+
+**Compress before tool forwarding** (T2 only, on plain `system` / `user` / `assistant` **string** content — no tool blocks):
+
+```python
+# OpenAI
+{"extra_body": {"splitter": {"compress_with_tools": true}}, "tools": [...], "messages": [...]}
+
+# Anthropic
+{"splitter": {"compress_with_tools": true}, "tools": [...], "messages": [...]}
+```
+
+**`trivial_threshold` (T1)**: in `pipeline.t1_route`, any value **strictly below `1.0`** enables a **second independent classify** pass (same corroboration behavior as `verify_trivial: true`). Use `1.0` for a single classifier call.
+
+**Adaptive hints**: optional top-level YAML `adaptive:` (see `config.example.yaml`). When enabled, `GET /v1/splitter/stats` and MCP `split.stats` include **`adaptive_hints`** if the local+cache share of requests exceeds **`max_local_fraction`** after **`min_requests`** calls.
+
+**T3 privacy / routing knobs** (all under `pipeline.t3_sem_cache` in YAML): `skip_cache_for_tools`, `cache_namespace_from_meta`, `never_cache_regex`. **T1** extras: `verify_trivial`, `force_complex_tools`, `force_complex_tags`, `min_user_chars`.
 
 ## Evaluation
 

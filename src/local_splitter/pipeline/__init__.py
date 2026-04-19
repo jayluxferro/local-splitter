@@ -19,16 +19,13 @@ from dataclasses import dataclass, field
 
 from collections.abc import AsyncIterator
 
-from local_splitter.config import Config
+from local_splitter.config import AdaptiveConfig, Config, apply_tactics_override
 from local_splitter.models import ChatClient, ModelBackendError, StreamChunk, Usage
 
-from . import batch as _batch
 from . import compress as _compress
-from . import diff as _diff
 from . import draft as _draft
-from . import intent as _intent
-from . import route as _route
 from . import sem_cache as _sem_cache
+from .pre_cloud import run_pre_cloud
 from .types import (
     ModelHint,
     PipelineRequest,
@@ -80,13 +77,38 @@ class _Stats:
             self._latencies[self._latency_cursor] = resp.latency_ms
             self._latency_cursor = (self._latency_cursor + 1) % _LATENCY_WINDOW
 
-    def snapshot(self) -> StatsSnapshot:
+    def _latency_values_chronological(self) -> list[float]:
+        if len(self._latencies) < _LATENCY_WINDOW:
+            return list(self._latencies)
+        i = self._latency_cursor
+        return self._latencies[i:] + self._latencies[:i]
+
+    def snapshot(self, adaptive: AdaptiveConfig | None = None) -> StatsSnapshot:
         p50: float | None = None
         p99: float | None = None
-        if self._latencies:
-            sorted_l = sorted(self._latencies)
+        sample_size = 0
+        raw = self._latency_values_chronological()
+        n = len(raw)
+        if n:
+            if n <= 512:
+                sorted_l = sorted(raw)
+            else:
+                step = n / 512.0
+                sorted_l = sorted(raw[int(i * step) % n] for i in range(512))
+            sample_size = len(sorted_l)
             p50 = _percentile(sorted_l, 0.50)
             p99 = _percentile(sorted_l, 0.99)
+
+        hints: list[str] = []
+        if (
+            adaptive
+            and adaptive.enabled
+            and self.total_requests >= adaptive.min_requests
+        ):
+            localish = self.by_served.get("local", 0) + self.by_served.get("cache", 0)
+            frac = localish / max(1, self.total_requests)
+            if frac > adaptive.max_local_fraction:
+                hints.append(adaptive.hint)
 
         return StatsSnapshot(
             started_at=self.started_at,
@@ -98,6 +120,8 @@ class _Stats:
             tokens_out_local=self.tokens_out_local,
             p50_latency_ms=p50,
             p99_latency_ms=p99,
+            latency_sample_size=sample_size,
+            adaptive_hints=tuple(hints),
         )
 
 
@@ -137,6 +161,8 @@ class Pipeline:
             await self.local.aclose()
         if self.cloud is not None:
             await self.cloud.aclose()
+        if self.cache_store is not None:
+            self.cache_store.close()
 
     async def complete(self, request: PipelineRequest) -> PipelineResponse:
         """Run the pipeline end-to-end.
@@ -151,127 +177,68 @@ class Pipeline:
         Explicit ``model_hint`` values ("local" / "cloud") bypass T1+T3.
         """
         t_start = time.perf_counter()
-        trace: list[StageEvent] = []
-        cache_embedding: list[float] | None = None  # kept for T3 store-on-miss
-
-        auto_route = request.model_hint == "auto"
-        has_local = self.local is not None
-
-        # --- T1 route (only for auto-routed requests) ---
-        if self.config.tactics.t1_route and has_local and auto_route:
-            route_result = await _route.apply(
-                request.messages,
-                local=self.local,
-                params=self.config.tactics.params.get("t1_route"),
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stop=request.stop,
-                seed=request.seed,
-                extra=request.extra,
-            )
-            trace.extend(route_result.events)
-
-            if route_result.local_reply is not None:
-                reply = route_result.local_reply
-                resp = PipelineResponse(
-                    content=reply.content,
-                    finish_reason=reply.finish_reason,
-                    served_by="local",
-                    model=reply.model,
-                    usage_local=reply.usage,
-                    usage_cloud=Usage(),
-                    latency_ms=(time.perf_counter() - t_start) * 1000,
-                    trace=trace,
-                    raw=reply.raw,
-                )
-                self._stats.record(resp)
-                return resp
-            # COMPLEX — fall through to T3 / cloud.
-
-        # --- T3 sem_cache lookup (auto requests only) ---
-        t3_active = (
-            self.config.tactics.t3_sem_cache
-            and has_local
-            and self.cache_store is not None
-            and auto_route
+        tac = apply_tactics_override(self.config.tactics, request.tactics_override)
+        pc = await run_pre_cloud(
+            request,
+            tactics=tac,
+            local=self.local,
+            cache_store=self.cache_store,
         )
-        if t3_active:
-            cache_result = await _sem_cache.lookup(
-                request.messages,
-                local=self.local,  # type: ignore[arg-type]
-                store=self.cache_store,  # type: ignore[arg-type]
-                params=self.config.tactics.params.get("t3_sem_cache"),
-            )
-            trace.extend(cache_result.events)
-            cache_embedding = cache_result.embedding
+        trace = list(pc.trace)
 
-            if cache_result.hit and cache_result.entry is not None:
-                entry = cache_result.entry
-                resp = PipelineResponse(
-                    content=entry.response,
-                    finish_reason=entry.finish_reason,  # type: ignore[arg-type]
-                    served_by="cache",
-                    model=entry.model,
-                    usage_local=Usage(),  # embed cost is negligible
-                    usage_cloud=Usage(),
-                    latency_ms=(time.perf_counter() - t_start) * 1000,
-                    trace=trace,
-                    raw={},
-                )
-                self._stats.record(resp)
-                return resp
-
-        # --- T2 compress (auto requests, after T3 miss) ---
-        messages_for_backend = request.messages
-        if self.config.tactics.t2_compress and has_local and auto_route:
-            compress_result = await _compress.apply(
-                messages_for_backend,
-                local=self.local,  # type: ignore[arg-type]
-                params=self.config.tactics.params.get("t2_compress"),
+        if pc.t1_local_reply is not None:
+            reply = pc.t1_local_reply
+            resp = PipelineResponse(
+                content=reply.content,
+                finish_reason=reply.finish_reason,
+                served_by="local",
+                model=reply.model,
+                usage_local=reply.usage,
+                usage_cloud=Usage(),
+                latency_ms=(time.perf_counter() - t_start) * 1000,
+                trace=trace,
+                raw=reply.raw,
             )
-            trace.extend(compress_result.events)
-            messages_for_backend = compress_result.messages
+            self._stats.record(resp)
+            return resp
 
-        # --- T6 intent (auto requests, after T2) ---
-        if self.config.tactics.t6_intent and has_local and auto_route:
-            intent_result = await _intent.apply(
-                messages_for_backend,
-                local=self.local,  # type: ignore[arg-type]
-                params=self.config.tactics.params.get("t6_intent"),
+        if pc.t3_cache_entry is not None:
+            entry = pc.t3_cache_entry
+            resp = PipelineResponse(
+                content=entry.response,
+                finish_reason=entry.finish_reason,  # type: ignore[arg-type]
+                served_by="cache",
+                model=entry.model,
+                usage_local=Usage(),
+                usage_cloud=Usage(),
+                latency_ms=(time.perf_counter() - t_start) * 1000,
+                trace=trace,
+                raw={},
             )
-            trace.extend(intent_result.events)
-            messages_for_backend = intent_result.messages
+            self._stats.record(resp)
+            return resp
 
-        # --- T5 diff (auto requests, after T6) ---
-        if self.config.tactics.t5_diff and has_local and auto_route:
-            diff_result = await _diff.apply(
-                messages_for_backend,
-                local=self.local,  # type: ignore[arg-type]
-                params=self.config.tactics.params.get("t5_diff"),
-            )
-            trace.extend(diff_result.events)
-            messages_for_backend = diff_result.messages
-
-        # --- T7 batch / prompt-cache tagging (auto requests, last transform) ---
-        if self.config.tactics.t7_batch and auto_route:
-            batch_result = _batch.apply(
-                messages_for_backend,
-                params=self.config.tactics.params.get("t7_batch"),
-            )
-            trace.extend(batch_result.events)
-            messages_for_backend = batch_result.messages
+        messages_for_backend = pc.messages
+        cache_embedding = pc.cache_embedding
+        t3_active = pc.t3_active
+        has_local = self.local is not None
+        t3_params = tac.params.get("t3_sem_cache") or {}
+        meta_dict = dict(request.meta)
+        cache_key_text = _sem_cache.cache_embed_source(
+            request.messages, t3_params, meta_dict
+        )
 
         # --- T4 draft-review (auto requests, replaces direct cloud call) ---
         if (
-            self.config.tactics.t4_draft
+            tac.t4_draft
             and has_local
-            and auto_route
+            and request.model_hint == "auto"
         ):
             draft_result = await _draft.apply(
                 messages_for_backend,
                 local=self.local,  # type: ignore[arg-type]
                 cloud=self.cloud,
-                params=self.config.tactics.params.get("t4_draft"),
+                params=tac.params.get("t4_draft"),
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 seed=request.seed,
@@ -289,6 +256,9 @@ class Pipeline:
                         model=reply.model,
                         finish_reason=reply.finish_reason,
                         cache_store=self.cache_store,
+                        params=t3_params,
+                        meta=meta_dict,
+                        cache_text=cache_key_text,
                     )
                     trace.append(store_event)
 
@@ -358,6 +328,9 @@ class Pipeline:
                 model=reply.model,
                 finish_reason=reply.finish_reason,
                 cache_store=self.cache_store,
+                params=t3_params,
+                meta=meta_dict,
+                cache_text=cache_key_text,
             )
             trace.append(store_event)
 
@@ -395,75 +368,19 @@ class Pipeline:
         ``split.transform``, gets back either a ready answer or a
         leaner prompt to send to its own cloud model.
         """
-        trace: list[StageEvent] = []
-        auto_route = request.model_hint == "auto"
-        has_local = self.local is not None
-
-        # --- T1 route ---
-        if self.config.tactics.t1_route and has_local and auto_route:
-            route_result = await _route.apply(
-                request.messages,
-                local=self.local,
-                params=self.config.tactics.params.get("t1_route"),
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stop=request.stop,
-                seed=request.seed,
-                extra=request.extra,
-            )
-            trace.extend(route_result.events)
-            if route_result.local_reply is not None:
-                return request.messages, trace, route_result.local_reply.content
-
-        # --- T3 cache lookup ---
-        if (
-            self.config.tactics.t3_sem_cache
-            and has_local
-            and self.cache_store is not None
-            and auto_route
-        ):
-            cache_result = await _sem_cache.lookup(
-                request.messages,
-                local=self.local,
-                store=self.cache_store,
-                params=self.config.tactics.params.get("t3_sem_cache"),
-            )
-            trace.extend(cache_result.events)
-            if cache_result.hit and cache_result.entry is not None:
-                return request.messages, trace, cache_result.entry.response
-
-        # --- T2 compress, T6 intent, T5 diff, T7 batch ---
-        messages = request.messages
-        if self.config.tactics.t2_compress and has_local and auto_route:
-            r = await _compress.apply(
-                messages, local=self.local,
-                params=self.config.tactics.params.get("t2_compress"),
-            )
-            trace.extend(r.events)
-            messages = r.messages
-        if self.config.tactics.t6_intent and has_local and auto_route:
-            r = await _intent.apply(
-                messages, local=self.local,
-                params=self.config.tactics.params.get("t6_intent"),
-            )
-            trace.extend(r.events)
-            messages = r.messages
-        if self.config.tactics.t5_diff and has_local and auto_route:
-            r = await _diff.apply(
-                messages, local=self.local,
-                params=self.config.tactics.params.get("t5_diff"),
-            )
-            trace.extend(r.events)
-            messages = r.messages
-        if self.config.tactics.t7_batch and auto_route:
-            r = _batch.apply(
-                messages,
-                params=self.config.tactics.params.get("t7_batch"),
-            )
-            trace.extend(r.events)
-            messages = r.messages
-
-        return messages, trace, None
+        tac = apply_tactics_override(self.config.tactics, request.tactics_override)
+        pc = await run_pre_cloud(
+            request,
+            tactics=tac,
+            local=self.local,
+            cache_store=self.cache_store,
+        )
+        trace = list(pc.trace)
+        if pc.t1_local_reply is not None:
+            return request.messages, trace, pc.t1_local_reply.content
+        if pc.t3_cache_entry is not None:
+            return request.messages, trace, pc.t3_cache_entry.response
+        return pc.messages, trace, None
 
     async def stream(
         self, request: PipelineRequest
@@ -477,86 +394,33 @@ class Pipeline:
         """
         # Run the synchronous pipeline path first.  If T1 routes locally
         # or T3 hits cache, yield the full answer as a single chunk.
-        t_start = time.perf_counter()
-        trace: list[StageEvent] = []
-        auto_route = request.model_hint == "auto"
-        has_local = self.local is not None
-
-        # --- T1 route ---
-        if self.config.tactics.t1_route and has_local and auto_route:
-            route_result = await _route.apply(
-                request.messages,
-                local=self.local,
-                params=self.config.tactics.params.get("t1_route"),
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stop=request.stop,
-                seed=request.seed,
-                extra=request.extra,
-            )
-            trace.extend(route_result.events)
-            if route_result.local_reply is not None:
-                yield StreamChunk(
-                    delta=route_result.local_reply.content,
-                    done=True,
-                    finish_reason=route_result.local_reply.finish_reason,
-                    usage=route_result.local_reply.usage,
-                )
-                return
-
-        # --- T3 cache lookup ---
-        t3_active = (
-            self.config.tactics.t3_sem_cache
-            and has_local
-            and self.cache_store is not None
-            and auto_route
+        tac = apply_tactics_override(self.config.tactics, request.tactics_override)
+        pc = await run_pre_cloud(
+            request,
+            tactics=tac,
+            local=self.local,
+            cache_store=self.cache_store,
         )
-        if t3_active:
-            cache_result = await _sem_cache.lookup(
-                request.messages,
-                local=self.local,
-                store=self.cache_store,
-                params=self.config.tactics.params.get("t3_sem_cache"),
+        if pc.t1_local_reply is not None:
+            lr = pc.t1_local_reply
+            yield StreamChunk(
+                delta=lr.content,
+                done=True,
+                finish_reason=lr.finish_reason,
+                usage=lr.usage,
             )
-            trace.extend(cache_result.events)
-            if cache_result.hit and cache_result.entry is not None:
-                yield StreamChunk(
-                    delta=cache_result.entry.response,
-                    done=True,
-                    finish_reason=cache_result.entry.finish_reason,
-                )
-                return
+            return
 
-        # --- T2 compress, T6 intent, T5 diff, T7 batch ---
-        messages_for_backend = request.messages
-        if self.config.tactics.t2_compress and has_local and auto_route:
-            r = await _compress.apply(
-                messages_for_backend, local=self.local,
-                params=self.config.tactics.params.get("t2_compress"),
+        if pc.t3_cache_entry is not None:
+            ent = pc.t3_cache_entry
+            yield StreamChunk(
+                delta=ent.response,
+                done=True,
+                finish_reason=ent.finish_reason,
             )
-            trace.extend(r.events)
-            messages_for_backend = r.messages
-        if self.config.tactics.t6_intent and has_local and auto_route:
-            r = await _intent.apply(
-                messages_for_backend, local=self.local,
-                params=self.config.tactics.params.get("t6_intent"),
-            )
-            trace.extend(r.events)
-            messages_for_backend = r.messages
-        if self.config.tactics.t5_diff and has_local and auto_route:
-            r = await _diff.apply(
-                messages_for_backend, local=self.local,
-                params=self.config.tactics.params.get("t5_diff"),
-            )
-            trace.extend(r.events)
-            messages_for_backend = r.messages
-        if self.config.tactics.t7_batch and auto_route:
-            r = _batch.apply(
-                messages_for_backend,
-                params=self.config.tactics.params.get("t7_batch"),
-            )
-            trace.extend(r.events)
-            messages_for_backend = r.messages
+            return
+
+        messages_for_backend = pc.messages
 
         # --- Stream from cloud (skip T4 draft in streaming mode) ---
         client = self.cloud if request.model_hint != "local" else self.local
@@ -599,8 +463,29 @@ class Pipeline:
             )
         return self.cloud, "cloud", "cloud_call"
 
+    async def compress_messages_only(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        tactics_override: frozenset[str] | None = None,
+    ) -> tuple[list[dict[str, str]], list[StageEvent]]:
+        """Run **T2 compress** only (for tool-bearing HTTP requests).
+
+        Returns the original messages unchanged when T2 is disabled or
+        there is no local backend.
+        """
+        tac = apply_tactics_override(self.config.tactics, tactics_override)
+        if not tac.t2_compress or self.local is None:
+            return messages, []
+        r = await _compress.apply(
+            list(messages),
+            local=self.local,
+            params=tac.params.get("t2_compress"),
+        )
+        return r.messages, r.events
+
     def stats(self) -> StatsSnapshot:
-        return self._stats.snapshot()
+        return self._stats.snapshot(self.config.adaptive)
 
 
 __all__ = [

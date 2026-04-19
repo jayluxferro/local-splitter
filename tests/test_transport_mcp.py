@@ -225,6 +225,8 @@ async def test_split_config_hides_nothing_sensitive() -> None:
     assert cfg["models"]["local"]["backend"] == "ollama"
     assert cfg["tactics"]["t1_route"] is False
     assert cfg["version"] == 1
+    assert "adaptive" in cfg
+    assert cfg["adaptive"]["enabled"] is False
 
 
 async def test_split_complete_invalid_model_hint_raises() -> None:

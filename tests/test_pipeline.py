@@ -119,6 +119,7 @@ async def test_stats_accumulate_across_calls() -> None:
     assert snap.tokens_in_cloud == 60
     assert snap.tokens_out_cloud == 15
     assert snap.tokens_in_local == 0
+    assert snap.latency_sample_size == 3
     assert snap.p50_latency_ms is not None
     assert snap.p99_latency_ms is not None
     assert snap.p99_latency_ms >= snap.p50_latency_ms

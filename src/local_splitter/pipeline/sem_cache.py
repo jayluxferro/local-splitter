@@ -15,6 +15,7 @@ Fail-open: embedding or DB errors fall back to a cache miss
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import struct
 import time
@@ -193,6 +194,66 @@ def _extract_cache_text(messages: list[dict[str, str]]) -> str:
     return ""
 
 
+def cache_embed_source(
+    messages: list[dict[str, str]],
+    params: dict[str, Any] | None,
+    meta: dict[str, Any] | None,
+) -> str:
+    """Text embedded for T3 (matches :func:`lookup`). Exposed for store-time checks."""
+    return _cache_embed_text(messages, params or {}, meta)
+
+
+def _cache_embed_text(
+    messages: list[dict[str, str]],
+    params: dict[str, Any],
+    meta: dict[str, Any] | None,
+) -> str:
+    """User text optionally prefixed with a namespace from ``meta``."""
+    base = _extract_cache_text(messages)
+    key = params.get("cache_namespace_from_meta")
+    if key:
+        ns = (meta or {}).get(str(key), "") or ""
+        if ns:
+            return f"[ns:{ns}]\n{base}"
+    return base
+
+
+def _never_cache_patterns(params: dict[str, Any]) -> list[re.Pattern[str]]:
+    raw = params.get("never_cache_regex") or []
+    if not isinstance(raw, list):
+        return []
+    out: list[re.Pattern[str]] = []
+    for pat in raw:
+        try:
+            out.append(re.compile(str(pat), re.DOTALL))
+        except re.error as exc:
+            _log.warning("invalid never_cache_regex %r: %s", pat, exc)
+    return out
+
+
+def _should_skip_cache_for_privacy(
+    *,
+    params: dict[str, Any],
+    meta: dict[str, Any] | None,
+    cache_text: str,
+    response_text: str | None,
+) -> tuple[bool, str | None]:
+    """Return (skip, reason) when lookup/store must be skipped."""
+    skip_tools = params.get("skip_cache_for_tools") or []
+    if isinstance(skip_tools, list) and skip_tools:
+        tn = (meta or {}).get("tool_name") or (meta or {}).get("tool")
+        if tn is not None and str(tn) in {str(x) for x in skip_tools}:
+            return True, "skip_cache_for_tools"
+
+    for rx in _never_cache_patterns(params):
+        if rx.search(cache_text):
+            return True, "never_cache_regex"
+        if response_text is not None and rx.search(response_text):
+            return True, "never_cache_regex"
+
+    return False, None
+
+
 @dataclass(slots=True)
 class CacheLookupResult:
     """Outcome of a T3 cache lookup."""
@@ -209,6 +270,7 @@ async def lookup(
     local: ChatClient,
     store: CacheStore,
     params: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> CacheLookupResult:
     """Embed the request and search the cache.
 
@@ -218,11 +280,20 @@ async def lookup(
     threshold = float(p.get("similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD))
     ttl = int(p.get("ttl", DEFAULT_TTL))
 
-    cache_text = _extract_cache_text(messages)
+    cache_text = _cache_embed_text(messages, p, meta)
     if not cache_text:
         return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
             StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
                        detail={"reason": "no user text"})
+        ])
+
+    skip, reason = _should_skip_cache_for_privacy(
+        params=p, meta=meta, cache_text=cache_text, response_text=None,
+    )
+    if skip:
+        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
+            StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
+                       detail={"reason": reason})
         ])
 
     t0 = time.perf_counter()
@@ -270,11 +341,27 @@ def store_response(
     model: str,
     finish_reason: str,
     cache_store: CacheStore,
+    params: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+    cache_text: str | None = None,
 ) -> StageEvent:
     """Store a cloud response in the cache after a miss.
 
     Returns a stage event for the trace.  Errors are swallowed (fail-open).
     """
+    p = params or {}
+    ct = cache_text or ""
+    skip, reason = _should_skip_cache_for_privacy(
+        params=p, meta=meta, cache_text=ct, response_text=response,
+    )
+    if skip:
+        return StageEvent(
+            stage="t3_cache_store",
+            decision="SKIP",
+            ms=0.0,
+            detail={"reason": reason},
+        )
+
     t0 = time.perf_counter()
     try:
         cache_store.store(
@@ -296,6 +383,7 @@ __all__ = [
     "CacheEntry",
     "CacheLookupResult",
     "CacheStore",
+    "cache_embed_source",
     "lookup",
     "store_response",
 ]

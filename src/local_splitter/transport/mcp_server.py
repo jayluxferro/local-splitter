@@ -34,11 +34,18 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from local_splitter.config import Config
+from local_splitter.config import Config, TACTIC_DISABLE_NAMES
 from local_splitter.models import Message, ModelBackendError
 from local_splitter.pipeline import Pipeline, PipelineError, PipelineRequest
 
 _log = logging.getLogger(__name__)
+
+
+def _mcp_tactics_override(raw: list[str] | None) -> frozenset[str] | None:
+    if not raw:
+        return None
+    out = {str(x).strip() for x in raw if str(x).strip() in TACTIC_DISABLE_NAMES}
+    return frozenset(out) if out else None
 
 
 def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
@@ -64,6 +71,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
         session_id: str | None = None,
         tool_name: str | None = None,
         tag: str | None = None,
+        tactics_disable: list[str] | None = None,
     ) -> dict[str, Any]:
         if model_hint not in ("auto", "local", "cloud"):
             raise ValueError(f"model_hint must be auto|local|cloud, got {model_hint!r}")
@@ -79,6 +87,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
                 "tool_name": tool_name,
                 "tag": tag,
             },
+            tactics_override=_mcp_tactics_override(tactics_disable),
         )
 
         # Local-only mode: no cloud backend configured.
@@ -141,11 +150,21 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
         messages: list[Message],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        session_id: str | None = None,
+        tool_name: str | None = None,
+        tag: str | None = None,
+        tactics_disable: list[str] | None = None,
     ) -> dict[str, Any]:
         req = PipelineRequest(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            meta={
+                "session_id": session_id,
+                "tool_name": tool_name,
+                "tag": tag,
+            },
+            tactics_override=_mcp_tactics_override(tactics_disable),
         )
         try:
             transformed, trace, local_response = await pipeline.transform(req)
@@ -207,10 +226,15 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
         name="split.cache_lookup",
         description=(
             "Look up a request in the T3 semantic cache without writing. "
-            "Returns NOT_IMPLEMENTED when T3 is disabled or no local backend."
+            "Optional ``meta`` (e.g. tool_name, tag, session_id) is passed through "
+            "to T3 skip/namespace rules. Returns NOT_IMPLEMENTED when T3 is disabled "
+            "or no local backend."
         ),
     )
-    async def split_cache_lookup(messages: list[Message]) -> dict[str, Any]:
+    async def split_cache_lookup(
+        messages: list[Message],
+        meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if (
             not config.tactics.t3_sem_cache
             or pipeline.local is None
@@ -229,6 +253,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
                 local=pipeline.local,
                 store=pipeline.cache_store,
                 params=config.tactics.params.get("t3_sem_cache"),
+                meta=meta,
             )
         except Exception as exc:
             _log.warning("split.cache_lookup error: %s", exc)
@@ -282,7 +307,7 @@ def _safe_config_view(config: Config) -> dict[str, Any]:
         "version": config.version,
         "transport": asdict(config.transport),
         "models": {
-            "cloud": model_view(config.cloud),
+            "cloud": model_view(config.cloud) if config.cloud is not None else None,
             "local": model_view(config.local) if config.local is not None else None,
         },
         "tactics": {
@@ -294,6 +319,11 @@ def _safe_config_view(config: Config) -> dict[str, Any]:
             "t6_intent": config.tactics.t6_intent,
             "t7_batch": config.tactics.t7_batch,
             "params": config.tactics.params,
+        },
+        "adaptive": {
+            "enabled": config.adaptive.enabled,
+            "min_requests": config.adaptive.min_requests,
+            "max_local_fraction": config.adaptive.max_local_fraction,
         },
         "log_file": str(config.log_file) if config.log_file else None,
     }

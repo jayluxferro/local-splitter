@@ -49,7 +49,7 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """local-splitter — see AGENT.md for the research design."""
+    """local-splitter — see README.md and docs/ARCHITECTURE.md."""
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
@@ -65,7 +65,19 @@ def _load(config_path: Path | None) -> Config:
 def _build_pipeline(config: Config) -> Pipeline:
     cloud = build_chat_client(config.cloud) if config.cloud is not None else None
     local = build_chat_client(config.local) if config.local is not None else None
-    return Pipeline(cloud=cloud, local=local, config=config)
+    cache_store = None
+    if (
+        config.tactics.t3_sem_cache
+        and local is not None
+        and config.local is not None
+        and config.local.embed_model
+    ):
+        from local_splitter.pipeline.sem_cache import CacheStore
+
+        state_dir = Path.cwd() / ".local_splitter"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        cache_store = CacheStore(state_dir / "cache.sqlite", embed_dim=768)
+    return Pipeline(cloud=cloud, local=local, config=config, cache_store=cache_store)
 
 
 @app.command("serve-http")
@@ -342,6 +354,21 @@ def eval_cmd(
         to_csv(all_runs, csv_path)
         typer.echo(f"\nResults written to {csv_path}")
         typer.echo(f"JSONL log: {log_path}")
+
+
+@app.command("demo")
+def demo_command() -> None:
+    """Print a concise first-run checklist (install, models, config, tests)."""
+    typer.echo("local-splitter — quick checklist\n")
+    typer.echo("  1. uv sync")
+    typer.echo("  2. ollama pull llama3.2:3b && ollama pull nomic-embed-text")
+    typer.echo("  3. cp config.example.yaml config.yaml  # set cloud endpoint + api_key_env")
+    typer.echo("  4. uv run pytest -q")
+    typer.echo("  5. uv run local-splitter serve-http --config config.yaml")
+    typer.echo("\nOptional:")
+    typer.echo("  • uv run python scripts/trace_report.py .local_splitter/eval/runs.jsonl -o /tmp/trace.html")
+    typer.echo("  • JSON Schemas for MCP tools: schemas/mcp-tools.json")
+    typer.echo("  • examples/openai_chat.sh — minimal curl to the proxy")
 
 
 if __name__ == "__main__":

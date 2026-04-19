@@ -22,6 +22,7 @@ report what happened. Standard clients ignore unknown keys.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -42,6 +43,94 @@ from local_splitter.pipeline import Pipeline, PipelineError, PipelineRequest
 
 _log = logging.getLogger(__name__)
 
+
+def _openai_messages_compress_safe(messages: list[Any]) -> bool:
+    """True when messages are plain text roles only (no tool_calls / tool)."""
+    for m in messages:
+        if not isinstance(m, dict):
+            return False
+        if m.get("role") == "tool":
+            return False
+        if m.get("tool_calls"):
+            return False
+        if m.get("function_call"):
+            return False
+    return True
+
+
+def _parse_tactics_override(opts: dict[str, Any]) -> frozenset[str] | None:
+    """Parse ``disable_tactics`` / ``tactics_disable`` from a splitter options dict."""
+    raw = opts.get("disable_tactics") or opts.get("tactics_disable")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        parts = [x.strip() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, list):
+        parts = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        return None
+    valid = {
+        "t1_route",
+        "t2_compress",
+        "t3_sem_cache",
+        "t4_draft",
+        "t5_diff",
+        "t6_intent",
+        "t7_batch",
+    }
+    out = {p for p in parts if p in valid}
+    return frozenset(out) if out else None
+
+
+def _anthropic_string_only_chain(body: dict[str, Any]) -> list[dict[str, str]] | None:
+    """Build OpenAI-shaped messages with string content only; None if unsupported."""
+    out: list[dict[str, str]] = []
+    sys = body.get("system")
+    if sys is not None and sys != "":
+        if not isinstance(sys, str):
+            return None
+        out.append({"role": "system", "content": sys})
+    for msg in body.get("messages", []):
+        if not isinstance(msg, dict):
+            return None
+        c = msg.get("content")
+        if not isinstance(c, str):
+            return None
+        role = msg.get("role", "user")
+        if not isinstance(role, str):
+            return None
+        out.append({"role": role, "content": c})
+    return out
+
+
+def _anthropic_apply_string_chain(
+    body: dict[str, Any], compressed: list[dict[str, str]]
+) -> dict[str, Any] | None:
+    """Write compressed string contents back into a simple Anthropic body."""
+    new_body = copy.deepcopy(body)
+    i = 0
+    if new_body.get("system") is not None and new_body.get("system") != "":
+        if not isinstance(new_body["system"], str):
+            return None
+        if i >= len(compressed) or compressed[i].get("role") != "system":
+            return None
+        new_body["system"] = compressed[i]["content"]
+        i += 1
+    new_msgs: list[dict[str, Any]] = []
+    for msg in new_body.get("messages", []):
+        if i >= len(compressed):
+            return None
+        role = msg.get("role", "user")
+        if compressed[i].get("role") != role:
+            return None
+        new_msgs.append({**msg, "content": compressed[i]["content"]})
+        i += 1
+    if i != len(compressed):
+        return None
+    new_body["messages"] = new_msgs
+    return new_body
+
+
 # Headers that should not be forwarded between pipeline hops.
 _HOP_HEADERS = frozenset({
     "host", "transfer-encoding", "connection",
@@ -56,7 +145,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
         version=__version__,
         description=(
             "OpenAI-compatible proxy that splits LLM calls between a local "
-            "and cloud model. See AGENT.md for the seven tactics."
+            "and cloud model. See README.md and docs/ARCHITECTURE.md."
         ),
     )
 
@@ -77,17 +166,36 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
         # Tool-bearing requests bypass the pipeline (which can't represent
         # tool_calls / tool role messages) and go directly to a backend.
-        # Try local ollama first, fall back to cloud transparent proxy.
+        # Optional: ``extra_body.splitter.compress_with_tools`` runs T2 on
+        # plain user/assistant/system messages before forwarding.
         if "tools" in body or "functions" in body:
+            msgs_for_tools = body.get("messages")
+            ex_tools = body.get("extra_body") or {}
+            sp_tools = ex_tools.get("splitter") or {}
+            if (
+                sp_tools.get("compress_with_tools")
+                and config.tactics.t2_compress
+                and isinstance(msgs_for_tools, list)
+                and _openai_messages_compress_safe(msgs_for_tools)
+            ):
+                tact_ov = _parse_tactics_override(sp_tools)
+                compressed, _ = await pipeline.compress_messages_only(
+                    msgs_for_tools, tactics_override=tact_ov,
+                )
+                body = {**body, "messages": compressed}
             if config.local is not None and config.local.backend == "ollama":
                 try:
-                    return await _local_openai_tool_proxy(body, config.local)
+                    return await _local_openai_tool_proxy(body, config.local, upstream_headers)
                 except Exception as exc:
                     _log.warning("local openai tool proxy failed, falling back to cloud: %s", exc)
             if config.cloud is not None:
                 return await _transparent_openai_proxy(
                     body, config.cloud.endpoint, upstream_headers,
                 )
+            raise HTTPException(
+                status_code=502,
+                detail="tool/function requests require a configured local or cloud backend",
+            )
 
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
@@ -117,6 +225,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 "tag": splitter_opts.get("tag"),
                 "model_requested": body.get("model"),
             },
+            tactics_override=_parse_tactics_override(splitter_opts),
         )
 
         if pipeline_req.stream:
@@ -143,14 +252,15 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
     async def list_models() -> dict[str, Any]:
         data: list[dict[str, Any]] = []
         created = int(time.time())
-        data.append(
-            {
-                "id": config.cloud.chat_model,
-                "object": "model",
-                "created": created,
-                "owned_by": f"cloud:{config.cloud.backend}",
-            }
-        )
+        if config.cloud is not None:
+            data.append(
+                {
+                    "id": config.cloud.chat_model,
+                    "object": "model",
+                    "created": created,
+                    "owned_by": f"cloud:{config.cloud.backend}",
+                }
+            )
         if config.local is not None:
             data.append(
                 {
@@ -158,6 +268,15 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                     "object": "model",
                     "created": created,
                     "owned_by": f"local:{config.local.backend}",
+                }
+            )
+        if not data:
+            data.append(
+                {
+                    "id": "local-splitter",
+                    "object": "model",
+                    "created": created,
+                    "owned_by": "local-splitter",
                 }
             )
         return {"object": "list", "data": data}
@@ -185,6 +304,23 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             if k.lower() not in _HOP_HEADERS
         }
 
+        splitter_opts = body.get("splitter") or {}
+        # Optional T2 on string-only messages before tool proxy (Anthropic).
+        if (
+            "tools" in body
+            and splitter_opts.get("compress_with_tools")
+            and config.tactics.t2_compress
+        ):
+            chain = _anthropic_string_only_chain(body)
+            if chain is not None and _openai_messages_compress_safe(chain):
+                tact_ov = _parse_tactics_override(splitter_opts)
+                compressed, _ = await pipeline.compress_messages_only(
+                    chain, tactics_override=tact_ov,
+                )
+                nb = _anthropic_apply_string_chain(body, compressed)
+                if nb is not None:
+                    body = nb
+
         # Tool-bearing requests bypass the pipeline (which can't represent
         # tool_use / tool_result blocks) and go directly to a backend.
         # Try local ollama first (if available), fall back to cloud.
@@ -200,6 +336,10 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 return await _transparent_proxy(
                     body, config.cloud.endpoint, upstream_headers,
                 )
+            raise HTTPException(
+                status_code=502,
+                detail="tool requests require a configured local or cloud backend",
+            )
 
         messages = _anthropic_to_pipeline_messages(body)
         if not messages:
@@ -213,7 +353,13 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             stop=body.get("stop_sequences"),
             stream=bool(body.get("stream")),
             upstream_headers=upstream_headers,
-            meta={"model_requested": body.get("model")},
+            meta={
+                "model_requested": body.get("model"),
+                "tool_name": splitter_opts.get("tool_name"),
+                "tag": splitter_opts.get("tag"),
+                "session_id": splitter_opts.get("session_id"),
+            },
+            tactics_override=_parse_tactics_override(splitter_opts),
         )
 
         if pipeline_req.stream:
@@ -473,6 +619,7 @@ async def _local_tool_proxy(
 async def _local_openai_tool_proxy(
     body: dict[str, Any],
     local_config: "Config.local.__class__",
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Route an OpenAI-format tool request to local ollama.
 

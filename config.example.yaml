@@ -31,13 +31,23 @@ models:
 # Recommended: T1 + T2 (45-79% cloud token savings).
 # See configs/ for other presets (conservative, max-savings, rag-heavy).
 pipeline:
+  # T1 extras: trivial_threshold < 1.0 enables a second classify vote (like verify_trivial).
+  # verify_trivial: true forces that vote; force_complex_tools / force_complex_tags match
+  # extra_body.splitter.tool_name / tag; min_user_chars skips routing for shorter prompts.
   t1_route:      { enabled: true, trivial_threshold: 0.8 }
   t2_compress:   { enabled: true, ratio_target: 0.5 }
+  # T3 extras: skip_cache_for_tools, cache_namespace_from_meta, never_cache_regex (list of patterns).
   t3_sem_cache:  { enabled: false, similarity_threshold: 0.92, ttl: 86400 }
   t4_draft:      { enabled: false }
   t5_diff:       { enabled: false }
   t6_intent:     { enabled: false }
   t7_batch:      { enabled: false }
+
+# Optional: hints in GET /v1/splitter/stats when local+cache share is very high.
+adaptive:
+  enabled: false
+  min_requests: 20
+  max_local_fraction: 0.45
 
 evaluation:
   log_file: .local_splitter/runs.jsonl

@@ -39,6 +39,19 @@ CLASSIFIER_FEWSHOT: list[Message] = [
     {"role": "assistant", "content": "COMPLEX"},
 ]
 
+# Second-pass classifier uses a different few-shot order to decorrelate errors
+# when ``verify_trivial`` is enabled (two TRIVIAL votes required).
+CLASSIFIER_FEWSHOT_B: list[Message] = [
+    {"role": "user", "content": "Classify: Refactor the auth module to support OAuth2 with PKCE flow across three services. Answer TRIVIAL or COMPLEX only."},
+    {"role": "assistant", "content": "COMPLEX"},
+    {"role": "user", "content": "Classify: What is 2+2? Answer TRIVIAL or COMPLEX only."},
+    {"role": "assistant", "content": "TRIVIAL"},
+    {"role": "user", "content": "Classify: Design a distributed consensus algorithm for a multi-region database. Answer TRIVIAL or COMPLEX only."},
+    {"role": "assistant", "content": "COMPLEX"},
+    {"role": "user", "content": "Classify: Rename variable x to count. Answer TRIVIAL or COMPLEX only."},
+    {"role": "assistant", "content": "TRIVIAL"},
+]
+
 _DECISION_RE = re.compile(r"\b(TRIVIAL|COMPLEX)\b", re.IGNORECASE)
 
 
@@ -59,6 +72,25 @@ def _extract_user_text(messages: list[Message]) -> str:
     return ""
 
 
+def _force_complex_from_meta(
+    meta: Mapping[str, Any] | None, params: dict[str, Any] | None
+) -> str | None:
+    """If meta matches a blocklist, return a short reason; else None."""
+    p = params or {}
+    m = meta or {}
+    tools = p.get("force_complex_tools") or []
+    tags = p.get("force_complex_tags") or []
+    tn = m.get("tool_name") or m.get("tool")
+    tag = m.get("tag")
+    tool_set = {str(x) for x in tools}
+    tag_set = {str(x) for x in tags}
+    if tn is not None and tool_set and str(tn) in tool_set:
+        return "force_complex_tools"
+    if tag is not None and tag_set and str(tag) in tag_set:
+        return "force_complex_tags"
+    return None
+
+
 def _parse_classification(raw: str) -> Classification:
     """Parse classifier output.  Defaults to COMPLEX on any ambiguity."""
     match = _DECISION_RE.search(raw)
@@ -75,14 +107,19 @@ async def classify(
     *,
     local: ChatClient,
     params: dict[str, Any] | None = None,
+    variant: int = 0,
 ) -> tuple[Classification, StageEvent]:
     """Classify a request as TRIVIAL or COMPLEX.
 
     On local-model failure returns COMPLEX (fail-open).
+
+    ``variant`` selects a different few-shot prefix (used when
+    ``verify_trivial`` runs a second independent vote).
     """
     user_text = _extract_user_text(messages)
+    fewshot = CLASSIFIER_FEWSHOT_B if variant % 2 else CLASSIFIER_FEWSHOT
     classifier_messages: list[Message] = [
-        *CLASSIFIER_FEWSHOT,
+        *fewshot,
         {"role": "user", "content": f"Classify: {user_text} Answer TRIVIAL or COMPLEX only."},
     ]
 
@@ -124,19 +161,62 @@ async def apply(
     stop: Sequence[str] | None = None,
     seed: int | None = None,
     extra: Mapping[str, Any] | None = None,
+    meta: Mapping[str, Any] | None = None,
 ) -> RouteResult:
     """Run T1 routing end-to-end.
 
     Classifies the request, and if TRIVIAL answers it locally.
     On any local-model error the request falls back to COMPLEX.
     """
+    p = params or {}
+    forced = _force_complex_from_meta(meta, p)
+    if forced is not None:
+        return RouteResult(
+            classification="COMPLEX",
+            local_reply=None,
+            events=[
+                StageEvent(
+                    stage="t1_classify",
+                    decision="FORCED_COMPLEX",
+                    ms=0.0,
+                    detail={"reason": forced},
+                )
+            ],
+        )
+
+    min_uc = int(p.get("min_user_chars", 0))
+    user_text = _extract_user_text(messages).strip()
+    if min_uc > 0 and len(user_text) < min_uc:
+        return RouteResult(
+            classification="COMPLEX",
+            local_reply=None,
+            events=[
+                StageEvent(
+                    stage="t1_classify",
+                    decision="FORCED_COMPLEX",
+                    ms=0.0,
+                    detail={"reason": "min_user_chars", "min_user_chars": min_uc},
+                )
+            ],
+        )
+
     classification, classify_event = await classify(
-        messages, local=local, params=params
+        messages, local=local, params=params, variant=0
     )
     events: list[StageEvent] = [classify_event]
 
     if classification != "TRIVIAL":
         return RouteResult(classification="COMPLEX", local_reply=None, events=events)
+
+    # Second vote when verify_trivial is set, or when trivial_threshold < 1.0
+    # (presets use 0.8 to mean "seek a corroborating classify pass").
+    thresh = float(p.get("trivial_threshold", 1.0))
+    need_second = bool(p.get("verify_trivial", False)) or thresh < 1.0
+    if need_second:
+        c2, ev2 = await classify(messages, local=local, params=params, variant=1)
+        events.append(ev2)
+        if c2 != "TRIVIAL":
+            return RouteResult(classification="COMPLEX", local_reply=None, events=events)
 
     # --- answer locally ---
     t0 = time.perf_counter()
