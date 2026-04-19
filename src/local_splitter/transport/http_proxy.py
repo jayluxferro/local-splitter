@@ -45,7 +45,7 @@ _log = logging.getLogger(__name__)
 # Headers that should not be forwarded between pipeline hops.
 _HOP_HEADERS = frozenset({
     "host", "transfer-encoding", "connection",
-    "content-length", "content-encoding", "anthropic-beta",
+    "content-length", "content-encoding",
 })
 
 
@@ -164,13 +164,21 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             if k.lower() not in _HOP_HEADERS
         }
 
-        # Transparent proxy bypass: when the request uses tools, the
-        # pipeline can't represent tool_use / tool_result blocks, so
-        # forward the raw request to the upstream unchanged.
-        if "tools" in body and config.cloud is not None:
-            return await _transparent_proxy(
-                body, config.cloud.endpoint, upstream_headers,
-            )
+        # Tool-bearing requests bypass the pipeline (which can't represent
+        # tool_use / tool_result blocks) and go directly to a backend.
+        # Try local ollama first (if available), fall back to cloud.
+        if "tools" in body:
+            if config.local is not None and config.local.backend == "ollama":
+                try:
+                    return await _local_tool_proxy(
+                        body, config.local, upstream_headers,
+                    )
+                except Exception as exc:
+                    _log.warning("local tool proxy failed, falling back to cloud: %s", exc)
+            if config.cloud is not None:
+                return await _transparent_proxy(
+                    body, config.cloud.endpoint, upstream_headers,
+                )
 
         messages = _anthropic_to_pipeline_messages(body)
         if not messages:
@@ -258,6 +266,187 @@ async def _transparent_proxy(
         status_code=resp.status_code,
         headers=resp_headers,
     )
+
+
+def _anthropic_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Anthropic tool definitions to OpenAI/Ollama format."""
+    out = []
+    for t in tools:
+        out.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema", {}),
+            },
+        })
+    return out
+
+
+def _anthropic_messages_to_openai(
+    body: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Convert an Anthropic request body's messages to OpenAI/Ollama format.
+
+    Handles text, tool_use, and tool_result content blocks.
+    """
+    msgs: list[dict[str, Any]] = []
+
+    system = body.get("system")
+    if system:
+        text = system if isinstance(system, str) else " ".join(
+            b.get("text", "") for b in system if isinstance(b, dict) and b.get("type") == "text"
+        )
+        msgs.append({"role": "system", "content": text})
+
+    for msg in body.get("messages", []):
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            msgs.append({"role": role, "content": content})
+            continue
+
+        if not isinstance(content, list):
+            msgs.append({"role": role, "content": str(content)})
+            continue
+
+        # Content is a list of blocks — separate text, tool_use, and tool_result.
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+
+        for block in content:
+            btype = block.get("type")
+            if btype == "text":
+                text_parts.append(block.get("text", ""))
+            elif btype == "tool_use":
+                tool_calls.append({
+                    "id": block.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": block.get("name", ""),
+                        "arguments": json.dumps(block.get("input", {})),
+                    },
+                })
+            elif btype == "tool_result":
+                result_content = block.get("content", "")
+                if isinstance(result_content, list):
+                    result_content = " ".join(
+                        b.get("text", "") for b in result_content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": block.get("tool_use_id", ""),
+                    "content": str(result_content),
+                })
+
+        if role == "assistant" and tool_calls:
+            msgs.append({
+                "role": "assistant",
+                "content": "\n".join(text_parts) if text_parts else "",
+                "tool_calls": tool_calls,
+            })
+        elif tool_results:
+            # tool_result blocks come inside a user message in Anthropic format;
+            # in OpenAI format they become separate tool-role messages.
+            if text_parts:
+                msgs.append({"role": role, "content": "\n".join(text_parts)})
+            msgs.extend(tool_results)
+        else:
+            msgs.append({"role": role, "content": "\n".join(text_parts)})
+
+    return msgs
+
+
+def _openai_response_to_anthropic(
+    data: dict[str, Any],
+    request_model: str | None,
+) -> dict[str, Any]:
+    """Convert an Ollama /api/chat response to Anthropic Messages format."""
+    message = data.get("message") or {}
+    content_blocks: list[dict[str, Any]] = []
+
+    text = message.get("content", "")
+    if text:
+        content_blocks.append({"type": "text", "text": text})
+
+    for tc in message.get("tool_calls", []):
+        func = tc.get("function", {})
+        args = func.get("arguments", {})
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                pass
+        content_blocks.append({
+            "type": "tool_use",
+            "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
+            "name": func.get("name", ""),
+            "input": args,
+        })
+
+    if not content_blocks:
+        content_blocks.append({"type": "text", "text": ""})
+
+    stop_reason = "end_turn"
+    if any(b["type"] == "tool_use" for b in content_blocks):
+        stop_reason = "tool_use"
+
+    return {
+        "id": f"msg_{uuid.uuid4().hex}",
+        "type": "message",
+        "role": "assistant",
+        "content": content_blocks,
+        "model": request_model or data.get("model", ""),
+        "stop_reason": stop_reason,
+        "usage": {
+            "input_tokens": data.get("prompt_eval_count", 0),
+            "output_tokens": data.get("eval_count", 0),
+        },
+    }
+
+
+async def _local_tool_proxy(
+    body: dict[str, Any],
+    local_config: "Config.local.__class__",
+    headers: dict[str, str],
+) -> JSONResponse | StreamingResponse:
+    """Route a tool-bearing request to local ollama with format conversion.
+
+    Converts Anthropic Messages format → Ollama /api/chat format,
+    calls ollama, and converts the response back.
+    """
+    ollama_body: dict[str, Any] = {
+        "model": local_config.chat_model,
+        "messages": _anthropic_messages_to_openai(body),
+        "stream": False,
+    }
+
+    tools = body.get("tools")
+    if tools:
+        ollama_body["tools"] = _anthropic_tools_to_openai(tools)
+
+    tool_choice = body.get("tool_choice")
+    if tool_choice:
+        ollama_body["tool_choice"] = tool_choice
+
+    if body.get("temperature") is not None:
+        ollama_body["options"] = {"temperature": body["temperature"]}
+
+    url = f"{local_config.endpoint.rstrip('/')}/api/chat"
+    _log.debug("local tool proxy → %s", url)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        resp = await client.post(url, json=ollama_body)
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"ollama returned {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    anthropic_resp = _openai_response_to_anthropic(data, body.get("model"))
+    return JSONResponse(content=anthropic_resp)
 
 
 async def _sse_generator(
