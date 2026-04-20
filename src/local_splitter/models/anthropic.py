@@ -97,6 +97,9 @@ class AnthropicClient:
         headers: dict[str, str] = {
             "content-type": "application/json",
             "anthropic-version": "2023-06-01",
+            # Empty user-agent so httpx doesn't inject python-httpx/X.Y.Z;
+            # the agent's original user-agent flows through via upstream_headers.
+            "user-agent": "",
         }
         if resolved_key:
             headers["x-api-key"] = resolved_key

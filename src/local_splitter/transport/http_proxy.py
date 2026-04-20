@@ -412,7 +412,10 @@ async def _transparent_proxy(
     _log.debug("transparent proxy → %s (stream=%s)", url, is_stream)
 
     if is_stream:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=10.0),
+            headers={"user-agent": headers.get("user-agent", "")},
+        )
 
         try:
             resp = await client.send(
@@ -457,7 +460,10 @@ async def _transparent_proxy(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=10.0),
+            headers={"user-agent": headers.get("user-agent", "")},
+        ) as client:
             resp = await client.post(url, json=body, headers=headers)
     except (httpx.TimeoutException, httpx.ConnectError) as exc:
         return JSONResponse(
