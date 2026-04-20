@@ -414,12 +414,40 @@ async def _transparent_proxy(
     if is_stream:
         client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
 
+        try:
+            resp = await client.send(
+                client.build_request("POST", url, json=body, headers=headers),
+                stream=True,
+            )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            await client.aclose()
+            return JSONResponse(
+                {"error": {"type": "upstream_timeout", "message": str(exc)}},
+                status_code=504,
+            )
+
+        # Non-2xx: read full body and return it (preserves 429 rate limit messages)
+        if resp.status_code >= 400:
+            error_body = await resp.aread()
+            await resp.aclose()
+            await client.aclose()
+            resp_headers = {
+                k: v for k, v in resp.headers.items()
+                if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
+            }
+            from starlette.responses import Response as StarletteResp
+            return StarletteResp(
+                content=error_body,
+                status_code=resp.status_code,
+                headers=resp_headers,
+            )
+
         async def stream_and_close():
             try:
-                async with client.stream("POST", url, json=body, headers=headers) as resp:
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
             finally:
+                await resp.aclose()
                 await client.aclose()
 
         return StreamingResponse(
@@ -428,8 +456,14 @@ async def _transparent_proxy(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
-        resp = await client.post(url, json=body, headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+            resp = await client.post(url, json=body, headers=headers)
+    except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        return JSONResponse(
+            {"error": {"type": "upstream_timeout", "message": str(exc)}},
+            status_code=504,
+        )
 
     resp_headers = {
         k: v for k, v in resp.headers.items()
