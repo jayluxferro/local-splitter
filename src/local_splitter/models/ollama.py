@@ -37,6 +37,14 @@ from .base import (
 _log = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
+
+
+def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
+    """Return *resp.text* safely, falling back to bytes on decode failure."""
+    try:
+        return resp.text[:max_len]
+    except Exception:
+        return f"(undecodable body, {len(resp.content)} bytes)"
 DEFAULT_NUM_CTX = 8192
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0)
 
@@ -121,6 +129,10 @@ class OllamaClient:
             "messages": list(messages),
             "stream": stream,
             "options": options,
+            # Disable thinking/reasoning — models that support it (DeepSeek-R1,
+            # Qwen, etc.) can produce interleaved thinking content that breaks
+            # JSON parse or yields empty content fields downstream.
+            "think": False,
         }
 
         if extra:
@@ -158,7 +170,7 @@ class OllamaClient:
 
         if resp.status_code != 200:
             raise ModelBackendError(
-                f"ollama /api/chat returned {resp.status_code}: {resp.text[:200]}"
+                f"ollama /api/chat returned {resp.status_code}: {_safe_text(resp, 200)}"
             )
 
         try:
@@ -274,7 +286,7 @@ class OllamaClient:
 
         if resp.status_code != 200:
             raise ModelBackendError(
-                f"ollama /api/embed returned {resp.status_code}: {resp.text[:200]}"
+                f"ollama /api/embed returned {resp.status_code}: {_safe_text(resp, 200)}"
             )
 
         data = resp.json()

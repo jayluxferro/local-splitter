@@ -29,6 +29,14 @@ from .base import (
 
 _log = logging.getLogger(__name__)
 
+
+def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
+    """Return *resp.text* safely, falling back to bytes on decode failure."""
+    try:
+        return resp.text[:max_len]
+    except Exception:
+        return f"(undecodable body, {len(resp.content)} bytes)"
+
 DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 _STOP_REASON_MAP: dict[str, FinishReason] = {
@@ -182,7 +190,7 @@ class AnthropicClient:
 
         if resp.status_code != 200:
             raise ModelBackendError(
-                f"anthropic /v1/messages returned {resp.status_code}: {resp.text[:200]}"
+                f"anthropic /v1/messages returned {resp.status_code}: {_safe_text(resp, 200)}"
             )
 
         try:

@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import typer
@@ -92,6 +93,9 @@ def serve_http(
     ),
     host: str | None = typer.Option(None, "--host", help="Override transport.http_host."),
     port: int | None = typer.Option(None, "--port", help="Override transport.http_port."),
+    upstream: str | None = typer.Option(
+        None, "--upstream", help="Override the cloud upstream URL"
+    ),
     log_level: str = typer.Option("info", "--log-level"),
 ) -> None:
     """Run the FastAPI OpenAI-compatible proxy."""
@@ -99,6 +103,8 @@ def serve_http(
 
     logging.basicConfig(level=log_level.upper())
     config = _load(config_path)
+    if upstream and config.cloud:
+        config = replace(config, cloud=replace(config.cloud, endpoint=upstream))
     pipeline = _build_pipeline(config)
 
     # Late import to keep CLI import cheap.
