@@ -169,8 +169,16 @@ class OllamaClient:
             raise ModelBackendError(f"ollama chat request failed: {e}") from e
 
         if resp.status_code != 200:
+            retry_after = None
+            if h := resp.headers.get("retry-after"):
+                try:
+                    retry_after = float(h)
+                except ValueError:
+                    pass
             raise ModelBackendError(
-                f"ollama /api/chat returned {resp.status_code}: {_safe_text(resp, 200)}"
+                f"ollama /api/chat returned {resp.status_code}: {_safe_text(resp, 200)}",
+                status_code=resp.status_code,
+                retry_after_seconds=retry_after,
             )
 
         try:
@@ -285,8 +293,16 @@ class OllamaClient:
             raise ModelBackendError(f"ollama embed request failed: {e}") from e
 
         if resp.status_code != 200:
+            retry_after = None
+            if h := resp.headers.get("retry-after"):
+                try:
+                    retry_after = float(h)
+                except ValueError:
+                    pass
             raise ModelBackendError(
-                f"ollama /api/embed returned {resp.status_code}: {_safe_text(resp, 200)}"
+                f"ollama /api/embed returned {resp.status_code}: {_safe_text(resp, 200)}",
+                status_code=resp.status_code,
+                retry_after_seconds=retry_after,
             )
 
         data = resp.json()

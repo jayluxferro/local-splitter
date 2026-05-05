@@ -179,8 +179,16 @@ class OpenAICompatClient:
             raise ModelBackendError(f"openai-compat chat request failed: {e}") from e
 
         if resp.status_code != 200:
+            retry_after = None
+            if h := resp.headers.get("retry-after"):
+                try:
+                    retry_after = float(h)
+                except ValueError:
+                    pass
             raise ModelBackendError(
-                f"openai-compat /chat/completions returned {resp.status_code}: {_safe_text(resp, 200)}"
+                f"openai-compat /chat/completions returned {resp.status_code}: {_safe_text(resp, 200)}",
+                status_code=resp.status_code,
+                retry_after_seconds=retry_after,
             )
 
         try:
@@ -334,8 +342,16 @@ class OpenAICompatClient:
             raise ModelBackendError(f"openai-compat embed request failed: {e}") from e
 
         if resp.status_code != 200:
+            retry_after = None
+            if h := resp.headers.get("retry-after"):
+                try:
+                    retry_after = float(h)
+                except ValueError:
+                    pass
             raise ModelBackendError(
-                f"openai-compat /embeddings returned {resp.status_code}: {_safe_text(resp, 200)}"
+                f"openai-compat /embeddings returned {resp.status_code}: {_safe_text(resp, 200)}",
+                status_code=resp.status_code,
+                retry_after_seconds=retry_after,
             )
 
         data = resp.json()

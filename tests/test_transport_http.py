@@ -226,7 +226,7 @@ def test_backend_error_translates_to_502() -> None:
         json={"messages": [{"role": "user", "content": "x"}]},
     )
     assert r.status_code == 502
-    assert "backend" in r.json()["detail"].lower()
+    assert "upstream" in r.json()["error"].lower()
 
 
 # ------------------------------------------------------------------ #

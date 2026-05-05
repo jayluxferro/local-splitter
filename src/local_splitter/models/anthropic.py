@@ -189,8 +189,16 @@ class AnthropicClient:
             raise ModelBackendError(f"anthropic chat request failed: {e}") from e
 
         if resp.status_code != 200:
+            retry_after = None
+            if h := resp.headers.get("retry-after"):
+                try:
+                    retry_after = float(h)
+                except ValueError:
+                    pass
             raise ModelBackendError(
-                f"anthropic /v1/messages returned {resp.status_code}: {_safe_text(resp, 200)}"
+                f"anthropic /v1/messages returned {resp.status_code}: {_safe_text(resp, 200)}",
+                status_code=resp.status_code,
+                retry_after_seconds=retry_after,
             )
 
         try:

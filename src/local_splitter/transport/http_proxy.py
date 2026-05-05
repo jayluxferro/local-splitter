@@ -248,7 +248,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except ModelBackendError as e:
             _log.warning("backend error serving /v1/chat/completions: %s", e)
-            raise HTTPException(status_code=502, detail=f"backend error: {e}") from e
+            return _backend_error_response(e)
 
         return JSONResponse(_pipeline_to_openai(pr, request_model=body.get("model")))
 
@@ -386,7 +386,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except ModelBackendError as e:
             _log.warning("backend error serving /v1/messages: %s", e)
-            raise HTTPException(status_code=502, detail=f"backend error: {e}") from e
+            return _backend_error_response(e)
 
         return JSONResponse(_pipeline_to_anthropic(pr, request_model=body.get("model")))
 
@@ -794,7 +794,11 @@ async def _sse_generator(
             yield f"data: {json.dumps(data)}\n\n"
     except (PipelineError, ModelBackendError) as e:
         _log.warning("streaming error: %s", e)
-        error_data = {"error": {"message": str(e), "type": type(e).__name__}}
+        error_data: dict[str, Any] = {
+            "error": {"message": str(e), "type": type(e).__name__}
+        }
+        if isinstance(e, ModelBackendError) and e.retry_after_seconds is not None:
+            error_data["error"]["retry_after_seconds"] = e.retry_after_seconds
         yield f"data: {json.dumps(error_data)}\n\n"
 
     yield "data: [DONE]\n\n"
@@ -856,6 +860,19 @@ def _extract_text(content: Any) -> str:
                 parts.append(block.get("text", ""))
         return "\n".join(parts)
     return str(content)
+
+
+def _backend_error_response(e: ModelBackendError) -> JSONResponse:
+    """Return a JSONResponse preserving upstream status code and retry-after."""
+    status = e.status_code or 502
+    headers: dict[str, str] = {}
+    if e.retry_after_seconds is not None:
+        headers["retry-after"] = str(int(e.retry_after_seconds))
+    return JSONResponse(
+        status_code=status,
+        content={"error": str(e)},
+        headers=headers,
+    )
 
 
 def _anthropic_to_pipeline_messages(body: dict[str, Any]) -> list[dict[str, str]]:
@@ -966,11 +983,10 @@ async def _anthropic_sse_generator(
 
     except (PipelineError, ModelBackendError) as e:
         _log.warning("anthropic streaming error: %s", e)
-        error_event = {
-            "type": "error",
-            "error": {"type": "api_error", "message": str(e)},
-        }
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        error_detail: dict[str, Any] = {"type": "api_error", "message": str(e)}
+        if isinstance(e, ModelBackendError) and e.retry_after_seconds is not None:
+            error_detail["retry_after_seconds"] = e.retry_after_seconds
+        yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': error_detail})}\n\n"
 
     # If no done chunk was received, close the stream gracefully.
     yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
