@@ -183,14 +183,45 @@ class CacheStore:
 # Pipeline-facing functions
 # ---------------------------------------------------------------------------
 
-def _extract_cache_text(messages: list[dict[str, str]]) -> str:
+# Match llm-redactor placeholders ``⟨KIND_n·tag⟩`` and drop the per-request
+# tag.  ``⟨EMAIL_1·a1b2c3d4⟩`` → ``⟨EMAIL_1⟩``.  This lets two redacted
+# requests that differ only in concrete PII collapse to one cache entry.
+_REDACTOR_TAG_RE = re.compile(r"(⟨[A-Z_0-9]+)·[^⟩]+(⟩)")
+
+
+def _normalize_redactor_placeholders(text: str) -> str:
+    return _REDACTOR_TAG_RE.sub(r"\1\2", text)
+
+
+def _stringify_content(content: Any) -> str:
+    """Reduce OpenAI string content or Anthropic block-list content to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text" and isinstance(part.get("text"), str):
+                    parts.append(part["text"])
+                elif isinstance(part.get("content"), str):
+                    # Anthropic tool_result content can be a string.
+                    parts.append(part["content"])
+        return "\n".join(parts)
+    return ""
+
+
+def _extract_cache_text(messages: list[dict[str, Any]]) -> str:
     """Build the text that will be embedded for cache lookup.
 
-    Uses the last user message — the most query-specific part.
+    Uses the last user message — the most query-specific part.  Handles
+    both OpenAI string content and Anthropic block-list content.
+    Redactor per-request tags are normalized so PII-equivalent queries
+    collapse to one cache key.
     """
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            return msg.get("content", "")
+            text = _stringify_content(msg.get("content", ""))
+            return _normalize_redactor_placeholders(text)
     return ""
 
 
