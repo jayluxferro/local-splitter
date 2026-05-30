@@ -295,8 +295,14 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
     @app.post("/v1/messages")
     async def anthropic_messages(request: Request):
+        # Read raw bytes first so the transparent proxy path can forward the
+        # body byte-for-byte.  Anthropic validates thinking-block signatures
+        # against the exact JSON encoding it served — any json.loads/dumps
+        # round-trip changes whitespace / Unicode escapes / key ordering and
+        # breaks the signature with a 400 "Invalid signature in thinking block".
+        raw_body = await request.body()
         try:
-            body = await request.json()
+            body = json.loads(raw_body)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}") from e
         if not isinstance(body, dict):
@@ -310,6 +316,10 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
         splitter_opts = body.get("splitter") or {}
         # Optional T2 on string-only messages before tool proxy (Anthropic).
+        # NOTE: if this path actually modifies the body we MUST re-serialize,
+        # which breaks any thinking-block signatures.  That trade is acceptable
+        # because the caller explicitly opted in via splitter.compress_with_tools.
+        body_modified = False
         if (
             "tools" in body
             and splitter_opts.get("compress_with_tools")
@@ -324,6 +334,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 nb = _anthropic_apply_string_chain(body, compressed)
                 if nb is not None:
                     body = nb
+                    body_modified = True
 
         # Tool-bearing requests bypass the pipeline (which can't represent
         # tool_use / tool_result blocks) and go directly to a backend.
@@ -341,8 +352,14 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 except Exception as exc:
                     _log.warning("local tool proxy failed, falling back to cloud: %s", exc)
             if config.cloud is not None:
+                forward_bytes = (
+                    json.dumps(body).encode() if body_modified else raw_body
+                )
                 return await _transparent_proxy(
-                    body, config.cloud.endpoint, upstream_headers,
+                    forward_bytes,
+                    config.cloud.endpoint,
+                    upstream_headers,
+                    is_stream=bool(body.get("stream", False)),
                 )
             raise HTTPException(
                 status_code=502,
@@ -398,18 +415,22 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
 
 async def _transparent_proxy(
-    body: dict[str, Any],
+    body_bytes: bytes,
     upstream_endpoint: str,
     headers: dict[str, str],
+    *,
+    is_stream: bool,
 ) -> StreamingResponse | JSONResponse:
-    """Bypass the pipeline — forward the raw request/response unchanged.
+    """Bypass the pipeline — forward the raw request body unchanged.
 
-    Used for tool-bearing requests that the pipeline can't represent.
+    Used for tool-bearing requests that the pipeline can't represent.  We
+    forward the exact bytes received because Anthropic validates
+    ``thinking`` block signatures against the JSON encoding it originally
+    served; any json.loads/dumps round-trip invalidates them with a 400
+    "Invalid signature in thinking block".
     """
     url = f"{upstream_endpoint.rstrip('/')}/v1/messages"
-    is_stream = body.get("stream", False)
-
-    _log.debug("transparent proxy → %s (stream=%s)", url, is_stream)
+    _log.debug("transparent proxy → %s (stream=%s, %d bytes)", url, is_stream, len(body_bytes))
 
     if is_stream:
         client = httpx.AsyncClient(
@@ -419,7 +440,7 @@ async def _transparent_proxy(
 
         try:
             resp = await client.send(
-                client.build_request("POST", url, json=body, headers=headers),
+                client.build_request("POST", url, content=body_bytes, headers=headers),
                 stream=True,
             )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
@@ -464,7 +485,7 @@ async def _transparent_proxy(
             timeout=httpx.Timeout(300.0, connect=10.0),
             headers={"user-agent": headers.get("user-agent", "")},
         ) as client:
-            resp = await client.post(url, json=body, headers=headers)
+            resp = await client.post(url, content=body_bytes, headers=headers)
     except (httpx.TimeoutException, httpx.ConnectError) as exc:
         return JSONResponse(
             {"error": {"type": "upstream_timeout", "message": str(exc)}},
