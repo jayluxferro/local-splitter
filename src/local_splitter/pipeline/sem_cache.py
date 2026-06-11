@@ -26,6 +26,7 @@ from typing import Any
 import sqlite_vec
 
 from local_splitter.models import ChatClient, ModelBackendError
+from local_splitter.models.ollama import DEFAULT_NUM_CTX
 
 from .types import StageEvent
 
@@ -33,6 +34,7 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.92
 DEFAULT_TTL = 86400  # 24 hours
+DEFAULT_CHARS_PER_TOKEN = 4  # conservative: ~4 chars per token for most text
 
 
 # ---------------------------------------------------------------------------
@@ -328,13 +330,18 @@ async def lookup(
         ])
 
     # Encoded/bloated payloads (e.g. from Palisade transform chains) can
-    # produce cache text that exceeds the embedding model's limits.  Skip
-    # embedding rather than crashing the pipeline — fail-open.
-    if len(cache_text) > 2000:
+    # exceed the embedding model's context window.  Use the model's actual
+    # num_ctx (via OllamaClient.num_ctx) or fall back to DEFAULT_NUM_CTX.
+    # The limit is configurable via params["embed_max_chars"].  Fail-open:
+    # skip embedding rather than crashing the pipeline.
+    model_ctx = getattr(local, "num_ctx", None) or DEFAULT_NUM_CTX
+    embed_max = int(p.get("embed_max_chars", model_ctx * DEFAULT_CHARS_PER_TOKEN))
+    if len(cache_text) > embed_max:
         return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
             StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
-                       detail={"reason": "cache_text too long for embedder",
-                               "length": len(cache_text)})
+                       detail={"reason": "cache_text exceeds embedder context",
+                               "length": len(cache_text), "max_chars": embed_max,
+                               "num_ctx": model_ctx})
         ])
 
     t0 = time.perf_counter()
