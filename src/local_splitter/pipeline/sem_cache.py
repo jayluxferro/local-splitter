@@ -327,6 +327,16 @@ async def lookup(
                        detail={"reason": reason})
         ])
 
+    # Encoded/bloated payloads (e.g. from Palisade transform chains) can
+    # produce cache text that exceeds the embedding model's limits.  Skip
+    # embedding rather than crashing the pipeline — fail-open.
+    if len(cache_text) > 2000:
+        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
+            StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
+                       detail={"reason": "cache_text too long for embedder",
+                               "length": len(cache_text)})
+        ])
+
     t0 = time.perf_counter()
     try:
         embeddings = await local.embed([cache_text])
