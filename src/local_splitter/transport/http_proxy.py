@@ -32,7 +32,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 import httpx
 
@@ -132,9 +132,12 @@ def _anthropic_apply_string_chain(
 
 
 # Headers that should not be forwarded between pipeline hops.
+# accept-encoding is capability-bound: this proxy consumes upstream bytes
+# before re-serving, so it must not advertise encodings its own httpx cannot
+# decode (br/zstd) — httpx re-adds its own capability set on send.
 _HOP_HEADERS = frozenset({
     "host", "transfer-encoding", "connection",
-    "content-length", "content-encoding",
+    "content-length", "content-encoding", "accept-encoding",
 })
 
 
@@ -450,26 +453,38 @@ async def _transparent_proxy(
                 status_code=504,
             )
 
-        # Non-2xx: read full body and return it (preserves 429 rate limit messages)
-        if resp.status_code >= 400:
+        # Gate 1: never commit to SSE until the upstream proves it has one.
+        content_type = resp.headers.get("content-type", "")
+        if resp.status_code >= 400 or "text/event-stream" not in content_type:
             error_body = await resp.aread()
             await resp.aclose()
             await client.aclose()
             resp_headers = {
                 k: v for k, v in resp.headers.items()
-                if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
+                if k.lower() not in _HOP_HEADERS
             }
-            from starlette.responses import Response as StarletteResp
-            return StarletteResp(
+            if not resp_headers.get("content-type"):
+                resp_headers["content-type"] = "application/octet-stream"
+            return Response(
                 content=error_body,
                 status_code=resp.status_code,
                 headers=resp_headers,
             )
 
         async def stream_and_close():
+            # Gate 2: a committed stream must never end with zero complete frames.
             try:
                 async for chunk in resp.aiter_bytes():
                     yield chunk
+            except Exception as exc:
+                _log.warning("upstream stream reset in transparent proxy: %s", exc)
+                error_detail = {"type": "api_error", "message": str(exc)}
+                error_event = {"type": "error", "error": error_detail}
+                # Leading \n\n self-frames the terminal event: if the upstream
+                # died mid-frame, the partial line is terminated and its block
+                # dispatched first; after a complete frame the extra blank
+                # lines are no-ops to SSE parsers.
+                yield f"\n\nevent: error\ndata: {json.dumps(error_event)}\n\n".encode()
             finally:
                 await resp.aclose()
                 await client.aclose()
@@ -496,7 +511,6 @@ async def _transparent_proxy(
         k: v for k, v in resp.headers.items()
         if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
     }
-    from starlette.responses import Response
     return Response(
         content=resp.content,
         status_code=resp.status_code,
@@ -745,7 +759,7 @@ async def _transparent_openai_proxy(
     body: dict[str, Any],
     upstream_endpoint: str,
     headers: dict[str, str],
-) -> StreamingResponse | JSONResponse:
+) -> StreamingResponse | JSONResponse | Response:
     """Bypass the pipeline — forward the raw OpenAI request/response unchanged."""
     url = f"{upstream_endpoint.rstrip('/')}/v1/chat/completions"
     is_stream = body.get("stream", False)
@@ -753,14 +767,54 @@ async def _transparent_openai_proxy(
     _log.debug("transparent openai proxy → %s (stream=%s)", url, is_stream)
 
     if is_stream:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(300.0, connect=10.0),
+            headers={"user-agent": headers.get("user-agent", "")},
+        )
+
+        try:
+            resp = await client.send(
+                client.build_request("POST", url, json=body, headers=headers),
+                stream=True,
+            )
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            await client.aclose()
+            return JSONResponse(
+                {"error": {"type": "upstream_timeout", "message": str(exc)}},
+                status_code=504,
+            )
+
+        # Gate 1: never commit to SSE until the upstream proves it has one.
+        content_type = resp.headers.get("content-type", "")
+        if resp.status_code >= 400 or "text/event-stream" not in content_type:
+            error_body = await resp.aread()
+            await resp.aclose()
+            await client.aclose()
+            resp_headers = {
+                k: v for k, v in resp.headers.items()
+                if k.lower() not in _HOP_HEADERS
+            }
+            if not resp_headers.get("content-type"):
+                resp_headers["content-type"] = "application/octet-stream"
+            return Response(
+                content=error_body,
+                status_code=resp.status_code,
+                headers=resp_headers,
+            )
 
         async def stream_and_close():
+            # Gate 2: a committed stream must never end with zero complete frames.
             try:
-                async with client.stream("POST", url, json=body, headers=headers) as resp:
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+            except Exception as exc:
+                _log.warning("upstream stream reset in transparent openai proxy: %s", exc)
+                error_event = {"error": {"type": "api_error", "message": str(exc)}}
+                # Leading \n\n self-frames the terminal event (see above).
+                yield f"\n\ndata: {json.dumps(error_event)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
             finally:
+                await resp.aclose()
                 await client.aclose()
 
         return StreamingResponse(
@@ -776,7 +830,6 @@ async def _transparent_openai_proxy(
         k: v for k, v in resp.headers.items()
         if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
     }
-    from starlette.responses import Response
     return Response(
         content=resp.content,
         status_code=resp.status_code,
