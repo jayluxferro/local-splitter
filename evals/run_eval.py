@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from local_splitter.config import TacticsConfig, load_config
 from local_splitter.evals import (
-    TACTIC_SUBSETS,
     comparison_table,
     cost_estimate,
     judge_quality,

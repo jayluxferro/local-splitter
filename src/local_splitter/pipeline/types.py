@@ -15,7 +15,9 @@ from typing import Any, Literal
 from local_splitter.models import FinishReason, Message, Usage
 
 ModelHint = Literal["auto", "local", "cloud"]
-ServedBy = Literal["local", "cache", "cloud", "draft+cloud"]
+# "passthrough" marks requests that never entered the pipeline (tool-bearing
+# bodies forwarded byte-for-byte to preserve thinking-block signatures).
+ServedBy = Literal["local", "cache", "cloud", "draft+cloud", "passthrough"]
 
 
 @dataclass(slots=True)

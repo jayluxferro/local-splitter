@@ -207,6 +207,32 @@ def test_stats_endpoint_reflects_activity() -> None:
     assert snap["p50_latency_ms"] is not None
 
 
+def test_stats_endpoint_counts_streamed_requests() -> None:
+    """Regression: pipeline.stream() must record stats like complete() does.
+
+    Before the fix, stream() never called _stats.record(), so streamed
+    requests — the default for LLM clients — were invisible to stats.
+    """
+    client, _, _ = _client()
+    r = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "x"}],
+            "stream": True,
+        },
+    )
+    assert r.status_code == 200
+    assert "data: [DONE]" in r.text  # stream fully consumed → finally recorded
+
+    snap = client.get("/v1/splitter/stats").json()
+    assert snap["total_requests"] == 1
+    assert snap["by_served"]["cloud"] == 1
+    # FakeChatClient's stream chunk carries no usage → recorded as zero.
+    assert snap["tokens_in_cloud"] == 0
+    assert snap["tokens_out_cloud"] == 0
+    assert snap["p50_latency_ms"] is not None
+
+
 def test_healthz() -> None:
     client, _, _ = _client()
     r = client.get("/healthz")

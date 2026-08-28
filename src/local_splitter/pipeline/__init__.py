@@ -20,7 +20,13 @@ from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 
 from local_splitter.config import AdaptiveConfig, Config, apply_tactics_override
-from local_splitter.models import ChatClient, ModelBackendError, StreamChunk, Usage
+from local_splitter.models import (
+    ChatClient,
+    FinishReason,
+    ModelBackendError,
+    StreamChunk,
+    Usage,
+)
 
 from . import compress as _compress
 from . import draft as _draft
@@ -391,7 +397,12 @@ class Pipeline:
         short-circuit and cannot stream — they fall back to a single
         non-streaming chunk.  All other tactics transform the messages
         before handing off to the cloud backend's ``stream()`` method.
+
+        Every served stream is recorded in stats exactly once, mirroring
+        ``complete()``: without this, streaming traffic (i.e. all agentic
+        clients) was invisible on /v1/splitter/stats.
         """
+        t_start = time.perf_counter()
         # Run the synchronous pipeline path first.  If T1 routes locally
         # or T3 hits cache, yield the full answer as a single chunk.
         tac = apply_tactics_override(self.config.tactics, request.tactics_override)
@@ -403,6 +414,19 @@ class Pipeline:
         )
         if pc.t1_local_reply is not None:
             lr = pc.t1_local_reply
+            self._stats.record(
+                PipelineResponse(
+                    content=lr.content,
+                    finish_reason=lr.finish_reason,
+                    served_by="local",
+                    model=lr.model,
+                    usage_local=lr.usage,
+                    usage_cloud=Usage(),
+                    latency_ms=(time.perf_counter() - t_start) * 1000,
+                    trace=list(pc.trace),
+                    raw=lr.raw,
+                )
+            )
             yield StreamChunk(
                 delta=lr.content,
                 done=True,
@@ -413,6 +437,19 @@ class Pipeline:
 
         if pc.t3_cache_entry is not None:
             ent = pc.t3_cache_entry
+            self._stats.record(
+                PipelineResponse(
+                    content=ent.response,
+                    finish_reason=ent.finish_reason,  # type: ignore[arg-type]
+                    served_by="cache",
+                    model=ent.model,
+                    usage_local=Usage(),
+                    usage_cloud=Usage(),
+                    latency_ms=(time.perf_counter() - t_start) * 1000,
+                    trace=list(pc.trace),
+                    raw={},
+                )
+            )
             yield StreamChunk(
                 delta=ent.response,
                 done=True,
@@ -436,8 +473,35 @@ class Pipeline:
             extra=request.extra,
             upstream_headers=request.upstream_headers or None,
         )
-        async for chunk in chunks:
-            yield chunk
+        served_by: ServedBy = "local" if request.model_hint == "local" else "cloud"
+        final_usage: Usage | None = None
+        final_finish: FinishReason | None = None
+        try:
+            async for chunk in chunks:
+                if chunk.usage is not None:
+                    final_usage = chunk.usage
+                if chunk.finish_reason is not None:
+                    final_finish = chunk.finish_reason
+                yield chunk
+        finally:
+            # Exactly-once recording for a served stream: normal completion,
+            # a torn upstream connection, and client disconnect (GeneratorExit
+            # at the yield) all land here.  A failure inside client.stream()
+            # itself propagates before the try and stays unrecorded — the
+            # same contract complete() has for failed backend calls.
+            usage = final_usage or Usage()
+            self._stats.record(
+                PipelineResponse(
+                    content="",
+                    finish_reason=final_finish or "unknown",
+                    served_by=served_by,
+                    model="",
+                    usage_local=usage if served_by == "local" else Usage(),
+                    usage_cloud=usage if served_by == "cloud" else Usage(),
+                    latency_ms=(time.perf_counter() - t_start) * 1000,
+                    trace=list(pc.trace),
+                )
+            )
 
     def _choose_backend(
         self, hint: ModelHint
@@ -483,6 +547,31 @@ class Pipeline:
             params=tac.params.get("t2_compress"),
         )
         return r.messages, r.events
+
+    def record_bypass(self, *, served_by: ServedBy, latency_ms: float) -> None:
+        """Count a request the HTTP transport served without the pipeline.
+
+        Tool-bearing bodies are proxied byte-for-byte (a json round-trip
+        would break Anthropic thinking-block signatures), so they never
+        become a ``PipelineRequest`` and none of the ``complete()`` /
+        ``stream()`` accounting sees them.  They still passed through this
+        service and must show up in ``total_requests`` / ``by_served`` —
+        otherwise the stats endpoint silently under-reports traffic on
+        agentic chains, where every request carries tools.  Token usage is
+        unknowable on these paths and recorded as zero.
+        """
+        self._stats.record(
+            PipelineResponse(
+                content="",
+                finish_reason="unknown",
+                served_by=served_by,
+                model="",
+                usage_local=Usage(),
+                usage_cloud=Usage(),
+                latency_ms=latency_ms,
+                trace=[],
+            )
+        )
 
     def stats(self) -> StatsSnapshot:
         return self._stats.snapshot(self.config.adaptive)

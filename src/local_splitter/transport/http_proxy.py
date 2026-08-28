@@ -192,13 +192,29 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 and config.local.backend == "ollama"
             ):
                 try:
-                    return await _local_openai_tool_proxy(body, config.local, upstream_headers)
+                    t0 = time.perf_counter()
+                    resp = await _local_openai_tool_proxy(body, config.local, upstream_headers)
                 except Exception as exc:
                     _log.warning("local openai tool proxy failed, falling back to cloud: %s", exc)
+                else:
+                    # Success only: on failure we fall through to cloud, which
+                    # records its own passthrough below.
+                    pipeline.record_bypass(
+                        served_by="local",
+                        latency_ms=(time.perf_counter() - t0) * 1000,
+                    )
+                    return resp
             if config.cloud is not None:
-                return await _transparent_openai_proxy(
+                t0 = time.perf_counter()
+                resp = await _transparent_openai_proxy(
                     body, config.cloud.endpoint, upstream_headers,
                 )
+                # For streams this is time-to-headers, not full stream duration.
+                pipeline.record_bypass(
+                    served_by="passthrough",
+                    latency_ms=(time.perf_counter() - t0) * 1000,
+                )
+                return resp
             raise HTTPException(
                 status_code=502,
                 detail="tool/function requests require a configured local or cloud backend",
@@ -349,21 +365,37 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 and config.local.backend == "ollama"
             ):
                 try:
-                    return await _local_tool_proxy(
+                    t0 = time.perf_counter()
+                    resp = await _local_tool_proxy(
                         body, config.local, upstream_headers,
                     )
                 except Exception as exc:
                     _log.warning("local tool proxy failed, falling back to cloud: %s", exc)
+                else:
+                    # Success only: on failure we fall through to cloud, which
+                    # records its own passthrough below.
+                    pipeline.record_bypass(
+                        served_by="local",
+                        latency_ms=(time.perf_counter() - t0) * 1000,
+                    )
+                    return resp
             if config.cloud is not None:
                 forward_bytes = (
                     json.dumps(body).encode() if body_modified else raw_body
                 )
-                return await _transparent_proxy(
+                t0 = time.perf_counter()
+                resp = await _transparent_proxy(
                     forward_bytes,
                     config.cloud.endpoint,
                     upstream_headers,
                     is_stream=bool(body.get("stream", False)),
                 )
+                # For streams this is time-to-headers, not full stream duration.
+                pipeline.record_bypass(
+                    served_by="passthrough",
+                    latency_ms=(time.perf_counter() - t0) * 1000,
+                )
+                return resp
             raise HTTPException(
                 status_code=502,
                 detail="tool requests require a configured local or cloud backend",

@@ -55,6 +55,10 @@ class _FakeResponse:
     async def aread(self) -> bytes:
         return b"".join(self._chunks)
 
+    @property
+    def content(self) -> bytes:
+        return b"".join(self._chunks)
+
     async def aiter_bytes(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
             yield chunk
@@ -73,6 +77,12 @@ class _FakeAsyncClient:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    async def __aenter__(self) -> "_FakeAsyncClient":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
     def build_request(
         self,
         method: str,
@@ -88,6 +98,18 @@ class _FakeAsyncClient:
         if _FakeAsyncClient._handler is None:
             raise RuntimeError("no upstream handler configured")
         return _FakeAsyncClient._handler(request)
+
+    async def post(
+        self,
+        url: str,
+        *,
+        content: bytes | None = None,
+        json: Any | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _FakeResponse:
+        return await self.send(
+            self.build_request("POST", url, content=content, json=json, headers=headers)
+        )
 
     async def aclose(self) -> None:
         pass
@@ -302,6 +324,41 @@ def test_openai_transparent_proxy_midstream_reset_emits_terminal_error(tool_clie
     payload = json.loads(error_frames[0])
     assert payload["error"]["type"] == "api_error"
     assert body.rstrip().endswith("data: [DONE]")
+
+
+def test_transparent_proxy_counts_passthrough_in_stats(tool_client_factory):
+    """Regression: tool-bearing requests bypass the pipeline but must still
+    appear in /v1/splitter/stats — agentic chains carry tools on every
+    request, so without this the stats endpoint reports zero traffic."""
+
+    def handler(request: httpx.Request) -> _FakeResponse:
+        return _FakeResponse(
+            200,
+            {"content-type": "application/json"},
+            body=json.dumps({"ok": True}).encode(),
+        )
+
+    _FakeAsyncClient._handler = handler
+    client = tool_client_factory()
+
+    snap0 = client.get("/v1/splitter/stats").json()
+    assert snap0["total_requests"] == 0
+
+    r = client.post("/v1/messages", json=_tool_request(stream=False))
+    assert r.status_code == 200
+
+    snap = client.get("/v1/splitter/stats").json()
+    assert snap["total_requests"] == 1
+    assert snap["by_served"]["passthrough"] == 1
+    # Token usage is unknowable on the byte-passthrough path → zero.
+    assert snap["tokens_in_cloud"] == 0
+
+    # The OpenAI tool surface records the same way.
+    r = client.post("/v1/chat/completions", json=_openai_tool_request(stream=False))
+    assert r.status_code == 200
+    snap = client.get("/v1/splitter/stats").json()
+    assert snap["total_requests"] == 2
+    assert snap["by_served"]["passthrough"] == 2
 
 
 def test_hop_headers_include_accept_encoding():
