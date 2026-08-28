@@ -50,3 +50,10 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+# Pin the rule set explicitly.  Ruff 0.16 expanded its default rules
+# (I001/BLE001/B008/PYI/RUF/...), so a bare `uv lock -U` refresh broke the
+# CI lint gate with 56 errors the project never opted into.  Select the
+# classic default set to keep CI stable across ruff upgrades.
+select = ["E4", "E7", "E9", "F"]
