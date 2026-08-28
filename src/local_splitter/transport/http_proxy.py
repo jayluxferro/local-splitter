@@ -505,12 +505,25 @@ async def _transparent_proxy(
 
         async def stream_and_close():
             # Gate 2: a committed stream must never end with zero complete frames.
+            t0 = time.monotonic()
+            nbytes = 0
             try:
                 async for chunk in resp.aiter_bytes():
+                    nbytes += len(chunk)
                     yield chunk
-            except Exception as exc:
-                _log.warning("upstream stream reset in transparent proxy: %s", exc)
-                error_detail = {"type": "api_error", "message": str(exc)}
+            except Exception as exc:  # noqa: BLE001
+                # An abrupt upstream close surfaces as httpx.ReadError wrapping
+                # anyio.EndOfStream — str(exc) is EMPTY, so always prefix the
+                # exception type; without it both this log line and the
+                # client-visible terminal frame carry no information.
+                detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
+                _log.warning(
+                    "upstream stream reset in transparent proxy after %.1fs / %dB: %s",
+                    time.monotonic() - t0,
+                    nbytes,
+                    detail,
+                )
+                error_detail = {"type": "api_error", "message": detail}
                 error_event = {"type": "error", "error": error_detail}
                 # Leading \n\n self-frames the terminal event: if the upstream
                 # died mid-frame, the partial line is terminated and its block
@@ -836,12 +849,25 @@ async def _transparent_openai_proxy(
 
         async def stream_and_close():
             # Gate 2: a committed stream must never end with zero complete frames.
+            t0 = time.monotonic()
+            nbytes = 0
             try:
                 async for chunk in resp.aiter_bytes():
+                    nbytes += len(chunk)
                     yield chunk
-            except Exception as exc:
-                _log.warning("upstream stream reset in transparent openai proxy: %s", exc)
-                error_event = {"error": {"type": "api_error", "message": str(exc)}}
+            except Exception as exc:  # noqa: BLE001
+                # An abrupt upstream close surfaces as httpx.ReadError wrapping
+                # anyio.EndOfStream — str(exc) is EMPTY, so always prefix the
+                # exception type; without it both this log line and the
+                # client-visible terminal frame carry no information.
+                detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
+                _log.warning(
+                    "upstream stream reset in transparent openai proxy after %.1fs / %dB: %s",
+                    time.monotonic() - t0,
+                    nbytes,
+                    detail,
+                )
+                error_event = {"error": {"type": "api_error", "message": detail}}
                 # Leading \n\n self-frames the terminal event (see above).
                 yield f"\n\ndata: {json.dumps(error_event)}\n\n".encode()
                 yield b"data: [DONE]\n\n"
@@ -876,6 +902,8 @@ async def _sse_generator(
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
 
+    t0 = time.monotonic()
+    nbytes = 0
     try:
         async for chunk in pipeline.stream(req):
             data = {
@@ -891,6 +919,8 @@ async def _sse_generator(
                     }
                 ],
             }
+            if chunk.delta:
+                nbytes += len(chunk.delta.encode())
             if chunk.done and chunk.usage:
                 data["usage"] = {
                     "prompt_tokens": chunk.usage.input_tokens or 0,
@@ -899,9 +929,15 @@ async def _sse_generator(
                 }
             yield f"data: {json.dumps(data)}\n\n"
     except (PipelineError, ModelBackendError) as e:
-        _log.warning("streaming error: %s", e)
+        detail = f"{type(e).__name__}: {e}".rstrip(": ")
+        _log.warning(
+            "streaming error after %.1fs / %dB: %s",
+            time.monotonic() - t0,
+            nbytes,
+            detail,
+        )
         error_data: dict[str, Any] = {
-            "error": {"message": str(e), "type": type(e).__name__}
+            "error": {"message": detail, "type": type(e).__name__}
         }
         if isinstance(e, ModelBackendError) and e.retry_after_seconds is not None:
             error_data["error"]["retry_after_seconds"] = e.retry_after_seconds
@@ -1053,6 +1089,8 @@ async def _anthropic_sse_generator(
     yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
 
     total_output = 0
+    t0 = time.monotonic()
+    nbytes = 0
     try:
         async for chunk in pipeline.stream(req):
             if chunk.delta:
@@ -1062,6 +1100,7 @@ async def _anthropic_sse_generator(
                     "index": 0,
                     "delta": {"type": "text_delta", "text": chunk.delta},
                 }
+                nbytes += len(chunk.delta.encode())
                 yield f"event: content_block_delta\ndata: {json.dumps(delta_event)}\n\n"
 
             if chunk.done:
@@ -1088,8 +1127,14 @@ async def _anthropic_sse_generator(
                 return
 
     except (PipelineError, ModelBackendError) as e:
-        _log.warning("anthropic streaming error: %s", e)
-        error_detail: dict[str, Any] = {"type": "api_error", "message": str(e)}
+        detail = f"{type(e).__name__}: {e}".rstrip(": ")
+        _log.warning(
+            "anthropic streaming error after %.1fs / %dB: %s",
+            time.monotonic() - t0,
+            nbytes,
+            detail,
+        )
+        error_detail: dict[str, Any] = {"type": "api_error", "message": detail}
         if isinstance(e, ModelBackendError) and e.retry_after_seconds is not None:
             error_detail["retry_after_seconds"] = e.retry_after_seconds
         yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': error_detail})}\n\n"

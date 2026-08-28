@@ -11,16 +11,20 @@ network is used and verify the two gates from SPEC-sse-envelope.md:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+import asyncio as _asyncio_for_direct_test
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from local_splitter.config import Config, ModelConfig, TacticsConfig, TransportConfig
-from local_splitter.pipeline import Pipeline
+from local_splitter.models import ModelBackendError, StreamChunk
+from local_splitter.pipeline import Pipeline, PipelineRequest
 from local_splitter.transport import create_app
+from local_splitter.transport.http_proxy import _anthropic_sse_generator
 
 from _fakes import FakeChatClient
 
@@ -368,3 +372,130 @@ def test_hop_headers_include_accept_encoding():
     from local_splitter.transport.http_proxy import _HOP_HEADERS
 
     assert "accept-encoding" in _HOP_HEADERS
+
+
+def test_transparent_proxy_midstream_empty_readerror_typed_in_frame_and_log(
+    tool_client_factory, monkeypatch, caplog
+):
+    """Regression: httpx.ReadError('') has an empty str(); the terminal frame
+    and the WARNING log must still name the exception type."""
+    partial = (
+        b"event: content_block_delta\n"
+        b'data: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"text_delta","text":"Hel"}}\n\n'
+    )
+
+    def handler(request: httpx.Request) -> _FakeResponse:
+        return _FakeResponse(
+            200,
+            {"content-type": "text/event-stream"},
+            chunks=[partial],
+            mid_exc=httpx.ReadError(""),
+        )
+
+    _FakeAsyncClient._handler = handler
+    client = tool_client_factory()
+
+    with caplog.at_level(logging.WARNING, logger="local_splitter.transport.http_proxy"):
+        r = client.post("/v1/messages", json=_tool_request(stream=True))
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+
+    events = _parse_sse_events(r.text)
+    assert events[-1][0] == "error"
+    payload = json.loads(events[-1][1])
+    assert payload["type"] == "error"
+    assert payload["error"]["type"] == "api_error"
+    assert payload["error"]["message"].startswith("ReadError")
+    assert any(
+        "ReadError" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_openai_transparent_proxy_midstream_empty_readerror_typed_in_frame_and_log(
+    tool_client_factory, monkeypatch, caplog
+):
+    """Regression: httpx.ReadError('') on the OpenAI surface still names the
+    exception type in the terminal data frame and the WARNING log."""
+    partial = b'data: {"choices":[{"delta":{"content":"ok "}}]}\n\n'
+
+    def handler(request: httpx.Request) -> _FakeResponse:
+        return _FakeResponse(
+            200,
+            {"content-type": "text/event-stream"},
+            chunks=[partial],
+            mid_exc=httpx.ReadError(""),
+        )
+
+    _FakeAsyncClient._handler = handler
+    client = tool_client_factory()
+
+    with caplog.at_level(logging.WARNING, logger="local_splitter.transport.http_proxy"):
+        r = client.post("/v1/chat/completions", json=_openai_tool_request(stream=True))
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+
+    body = r.text
+    error_frames = [d for e, d in _parse_sse_events(body) if d.startswith('{"error"')]
+    assert len(error_frames) == 1
+    payload = json.loads(error_frames[0])
+    assert payload["error"]["type"] == "api_error"
+    assert payload["error"]["message"].startswith("ReadError")
+    assert any(
+        "ReadError" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_anthropic_sse_generator_empty_backend_error_typed_in_frame_and_log(
+    monkeypatch, caplog,
+):
+    """Regression: pipeline-side Anthropic SSE handler must name the exception
+    type even when the backend error carries an empty message string."""
+    cloud = FakeChatClient(chat_model="fake-cloud")
+    cfg = Config(
+        cloud=ModelConfig(
+            backend="openai_compat",
+            endpoint="http://fake-cloud",
+            chat_model="fake-cloud-model",
+        ),
+        local=None,
+        transport=TransportConfig(),
+        tactics=TacticsConfig(),
+    )
+    pipeline = Pipeline(cloud=cloud, local=None, config=cfg)
+
+    async def broken_stream(req: PipelineRequest):
+        yield StreamChunk(delta="Hel", done=False)
+        raise ModelBackendError("")
+
+    monkeypatch.setattr(pipeline, "stream", broken_stream)
+
+    req = PipelineRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model_hint="cloud",
+        stream=True,
+    )
+
+    async def collect() -> list[str]:
+        out: list[str] = []
+        async for ev in _anthropic_sse_generator(pipeline, req, "fake-model"):
+            out.append(ev)
+        return out
+
+    with caplog.at_level(logging.WARNING, logger="local_splitter.transport.http_proxy"):
+        events = _asyncio_for_direct_test.run(collect())
+
+    error_events = [e for e in events if e.startswith("event: error")]
+    assert len(error_events) == 1
+    data_line = error_events[0].splitlines()[1]
+    payload = json.loads(data_line[len("data: "):])
+    assert payload["type"] == "error"
+    assert payload["error"]["message"].startswith("ModelBackendError")
+    assert any(
+        "ModelBackendError" in rec.getMessage()
+        for rec in caplog.records
+    )
