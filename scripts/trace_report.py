@@ -37,9 +37,7 @@ def main() -> None:
             stages[st] += 1
             decisions[(st, str(ev.get("decision", "?")))] += 1
 
-    rows = "".join(
-        f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in stages.most_common(40)
-    )
+    rows = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in stages.most_common(40))
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>local-splitter trace</title>
 <style>body{{font-family:system-ui;margin:2rem}} table{{border-collapse:collapse}}

@@ -55,8 +55,13 @@ EVAL_SUBSETS = {
     "T7_only": TacticsConfig(t7_batch=True),
     "T1_T2_T3": TacticsConfig(t1_route=True, t2_compress=True, t3_sem_cache=True),
     "all": TacticsConfig(
-        t1_route=True, t2_compress=True, t3_sem_cache=True,
-        t4_draft=True, t5_diff=True, t6_intent=True, t7_batch=True,
+        t1_route=True,
+        t2_compress=True,
+        t3_sem_cache=True,
+        t4_draft=True,
+        t5_diff=True,
+        t6_intent=True,
+        t7_batch=True,
     ),
 }
 
@@ -104,9 +109,9 @@ async def main() -> None:
     for wl_path in wl_files:
         samples = load_workload(wl_path)
         wl_name = wl_path.stem
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  {wl_name}: {len(samples)} samples")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Fresh cache store per workload.
         cache_store = CacheStore(OUTPUT / f"cache_{wl_name}.sqlite", embed_dim=768)
@@ -138,9 +143,10 @@ async def main() -> None:
             for run in runs[1:]:
                 savings = token_savings_pct(baseline.summary, run.summary)
                 local_pct = (
-                    run.summary.served_by.get("local", 0)
-                    + run.summary.served_by.get("cache", 0)
-                ) / max(run.summary.n_samples, 1) * 100
+                    (run.summary.served_by.get("local", 0) + run.summary.served_by.get("cache", 0))
+                    / max(run.summary.n_samples, 1)
+                    * 100
+                )
                 print(
                     f"  {run.subset_name:15s}: "
                     f"{savings:6.1f}% cloud savings, "
@@ -150,8 +156,7 @@ async def main() -> None:
 
             # Routing accuracy for T1 subsets.
             labels = {
-                s.id: s.labels.get("trivial", False)
-                for s in samples if "trivial" in s.labels
+                s.id: s.labels.get("trivial", False) for s in samples if "trivial" in s.labels
             }
             if labels:
                 for run in runs:
@@ -192,7 +197,9 @@ async def main() -> None:
             baseline_run = runs[0]
             for run in runs[1:]:
                 # Skip near-zero-effect subsets.
-                base_cloud = baseline_run.summary.tokens_in_cloud + baseline_run.summary.tokens_out_cloud
+                base_cloud = (
+                    baseline_run.summary.tokens_in_cloud + baseline_run.summary.tokens_out_cloud
+                )
                 run_cloud = run.summary.tokens_in_cloud + run.summary.tokens_out_cloud
                 savings = (base_cloud - run_cloud) / base_cloud * 100 if base_cloud > 0 else 0
                 if abs(savings) < 5:
@@ -200,7 +207,10 @@ async def main() -> None:
 
                 print(f"  Judging quality: {run.subset_name} vs baseline...")
                 verdicts = await judge_quality(
-                    samples, baseline_run.samples, run.samples, judge=cloud,
+                    samples,
+                    baseline_run.samples,
+                    run.samples,
+                    judge=cloud,
                 )
                 qs = quality_summary(verdicts)
                 print(

@@ -106,8 +106,7 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
                 "action": "passthrough",
                 "transformed_messages": transformed,
                 "note": (
-                    "No cloud backend configured. Use the transformed "
-                    "messages with your own model."
+                    "No cloud backend configured. Use the transformed messages with your own model."
                 ),
                 "pipeline_trace": [e.as_dict() for e in trace],
             }
@@ -293,6 +292,7 @@ def _safe_config_view(config: Config) -> dict[str, Any]:
     We never expose an API key value — only the name of the env var that
     holds it. This matches the OpenAI-compat client's design.
     """
+
     def model_view(mc) -> dict[str, Any]:
         return {
             "backend": mc.backend,

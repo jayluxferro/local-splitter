@@ -204,12 +204,8 @@ async def test_split_cache_lookup_stub() -> None:
 
 async def test_split_stats_reflects_activity() -> None:
     server, _, _ = _build()
-    await _call(
-        server, "split.complete", {"messages": [{"role": "user", "content": "a"}]}
-    )
-    await _call(
-        server, "split.complete", {"messages": [{"role": "user", "content": "b"}]}
-    )
+    await _call(server, "split.complete", {"messages": [{"role": "user", "content": "a"}]})
+    await _call(server, "split.complete", {"messages": [{"role": "user", "content": "b"}]})
     snap = await _call(server, "split.stats", {})
     assert snap["total_requests"] == 2
     assert snap["by_served"]["cloud"] == 2

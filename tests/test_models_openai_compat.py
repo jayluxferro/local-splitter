@@ -73,9 +73,7 @@ async def test_missing_api_key_env_raises() -> None:
 
 async def test_both_api_key_and_env_rejected() -> None:
     with pytest.raises(ValueError, match="either"):
-        OpenAICompatClient(
-            chat_model="m", endpoint=BASE, api_key="k", api_key_env="E"
-        )
+        OpenAICompatClient(chat_model="m", endpoint=BASE, api_key="k", api_key_env="E")
 
 
 async def test_no_auth_is_allowed_for_local_servers() -> None:
@@ -96,9 +94,7 @@ async def test_no_auth_is_allowed_for_local_servers() -> None:
             captured,
         )
     )
-    async with OpenAICompatClient(
-        chat_model="local", endpoint=BASE, transport=transport
-    ) as c:
+    async with OpenAICompatClient(chat_model="local", endpoint=BASE, transport=transport) as c:
         await c.complete([{"role": "user", "content": "x"}])
     assert "authorization" not in captured[0].headers
 
@@ -119,9 +115,7 @@ async def test_complete_warns_on_length_finish(caplog: pytest.LogCaptureFixture)
             )
         )
     )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         with caplog.at_level("WARNING"):
             reply = await c.complete([{"role": "user", "content": "x"}])
     assert reply.finish_reason == "length"
@@ -145,9 +139,7 @@ async def test_complete_defensive_on_missing_usage() -> None:
             )
         )
     )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         reply = await c.complete([{"role": "user", "content": "x"}])
     assert reply.usage.input_tokens is None
     assert reply.usage.output_tokens is None
@@ -155,23 +147,15 @@ async def test_complete_defensive_on_missing_usage() -> None:
 
 
 async def test_complete_raises_on_empty_choices() -> None:
-    transport = httpx.MockTransport(
-        _static(httpx.Response(200, json={"choices": []}))
-    )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    transport = httpx.MockTransport(_static(httpx.Response(200, json={"choices": []})))
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         with pytest.raises(ModelBackendError, match="no choices"):
             await c.complete([{"role": "user", "content": "x"}])
 
 
 async def test_complete_raises_on_non_200() -> None:
-    transport = httpx.MockTransport(
-        _static(httpx.Response(429, text="rate limited"))
-    )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    transport = httpx.MockTransport(_static(httpx.Response(429, text="rate limited")))
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         with pytest.raises(ModelBackendError, match="429"):
             await c.complete([{"role": "user", "content": "x"}])
 
@@ -185,11 +169,11 @@ async def test_stream_parses_sse_deltas_and_done_marker() -> None:
         "data: [DONE]\n"
     )
     transport = httpx.MockTransport(
-        _static(httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"}))
+        _static(
+            httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
+        )
     )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         chunks = [ch async for ch in await c.stream([{"role": "user", "content": "hi"}])]
 
     deltas = [ch.delta for ch in chunks if ch.delta]
@@ -202,15 +186,9 @@ async def test_stream_parses_sse_deltas_and_done_marker() -> None:
 
 
 async def test_stream_handles_missing_done_marker() -> None:
-    sse = (
-        'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n'
-    )
-    transport = httpx.MockTransport(
-        _static(httpx.Response(200, content=sse.encode()))
-    )
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    sse = 'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n'
+    transport = httpx.MockTransport(_static(httpx.Response(200, content=sse.encode())))
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         chunks = [ch async for ch in await c.stream([{"role": "user", "content": "hi"}])]
     assert chunks[-1].done is True
     assert chunks[-1].finish_reason == "stop"
@@ -246,9 +224,7 @@ async def test_embed_preserves_server_index_ordering() -> None:
 
 async def test_embed_requires_embed_model() -> None:
     transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"data": []}))
-    async with OpenAICompatClient(
-        chat_model="m", endpoint=BASE, transport=transport
-    ) as c:
+    async with OpenAICompatClient(chat_model="m", endpoint=BASE, transport=transport) as c:
         with pytest.raises(ModelBackendError, match="embed_model"):
             await c.embed(["x"])
 

@@ -22,13 +22,14 @@ from _fakes import FakeChatClient
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _config(*, t4: bool = True, t1: bool = False) -> Config:
     return Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
         local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m",
+            backend="ollama",
+            endpoint="http://local",
+            chat_model="local-m",
         ),
         tactics=TacticsConfig(t1_route=t1, t4_draft=t4),
     )
@@ -41,13 +42,16 @@ _MSGS = [{"role": "user", "content": "explain monads"}]
 # Unit: apply()
 # ---------------------------------------------------------------------------
 
+
 async def test_apply_approved_draft() -> None:
     local = FakeChatClient(
-        chat_model="local-m", reply_content="A monad is...",
+        chat_model="local-m",
+        reply_content="A monad is...",
         usage=Usage(input_tokens=20, output_tokens=10),
     )
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="APPROVED\nA monad is...",
+        chat_model="cloud-m",
+        reply_content="APPROVED\nA monad is...",
         usage=Usage(input_tokens=40, output_tokens=5),
     )
 
@@ -66,11 +70,13 @@ async def test_apply_approved_draft() -> None:
 
 async def test_apply_revised_draft() -> None:
     local = FakeChatClient(
-        chat_model="local-m", reply_content="wrong answer",
+        chat_model="local-m",
+        reply_content="wrong answer",
         usage=Usage(input_tokens=20, output_tokens=10),
     )
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="Correct answer here.",
+        chat_model="cloud-m",
+        reply_content="Correct answer here.",
         usage=Usage(input_tokens=40, output_tokens=15),
     )
 
@@ -97,6 +103,7 @@ async def test_apply_cloud_review_error_raises() -> None:
     cloud = FakeChatClient(raise_on_complete=ModelBackendError("cloud down"))
 
     import pytest
+
     with pytest.raises(ModelBackendError, match="cloud down"):
         await apply(_MSGS, local=local, cloud=cloud)
 
@@ -105,13 +112,16 @@ async def test_apply_cloud_review_error_raises() -> None:
 # Integration: Pipeline.complete with T4
 # ---------------------------------------------------------------------------
 
+
 async def test_pipeline_t4_draft_review_flow() -> None:
     local = FakeChatClient(
-        chat_model="local-m", reply_content="draft answer",
+        chat_model="local-m",
+        reply_content="draft answer",
         usage=Usage(input_tokens=15, output_tokens=8),
     )
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="APPROVED\ndraft answer",
+        chat_model="cloud-m",
+        reply_content="APPROVED\ndraft answer",
         usage=Usage(input_tokens=30, output_tokens=5),
     )
     pipeline = Pipeline(cloud=cloud, local=local, config=_config())
@@ -131,7 +141,8 @@ async def test_pipeline_t4_draft_review_flow() -> None:
 
 async def test_pipeline_t4_disabled_uses_direct_cloud() -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="direct answer",
+        chat_model="cloud-m",
+        reply_content="direct answer",
         usage=Usage(input_tokens=20, output_tokens=10),
     )
     local = FakeChatClient(chat_model="local-m")
@@ -147,7 +158,8 @@ async def test_pipeline_t4_disabled_uses_direct_cloud() -> None:
 async def test_pipeline_t4_local_error_falls_to_direct_cloud() -> None:
     local = FakeChatClient(raise_on_complete=ModelBackendError("down"))
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="cloud answer",
+        chat_model="cloud-m",
+        reply_content="cloud answer",
         usage=Usage(input_tokens=20, output_tokens=10),
     )
     pipeline = Pipeline(cloud=cloud, local=local, config=_config())
@@ -164,9 +176,7 @@ async def test_pipeline_t4_explicit_hint_bypasses() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     pipeline = Pipeline(cloud=cloud, local=local, config=_config())
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=_MSGS, model_hint="cloud")
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS, model_hint="cloud"))
 
     assert resp.served_by == "cloud"
     assert local.calls == []
@@ -175,6 +185,7 @@ async def test_pipeline_t4_explicit_hint_bypasses() -> None:
 # ---------------------------------------------------------------------------
 # Composition: T1 + T4
 # ---------------------------------------------------------------------------
+
 
 async def test_t1_trivial_bypasses_t4() -> None:
     local = FakeChatClient(
@@ -200,7 +211,8 @@ async def test_t1_complex_then_t4_draft() -> None:
         usage=Usage(input_tokens=10, output_tokens=5),
     )
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="APPROVED\nmy draft",
+        chat_model="cloud-m",
+        reply_content="APPROVED\nmy draft",
         usage=Usage(input_tokens=30, output_tokens=5),
     )
     pipeline = Pipeline(cloud=cloud, local=local, config=_config(t4=True, t1=True))

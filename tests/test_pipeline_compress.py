@@ -32,11 +32,11 @@ SHORT_SYSTEM = "be helpful"  # below min_length
 
 def _config(*, t2: bool = True, t1: bool = False, t3: bool = False, **t2_params) -> Config:
     return Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
         local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m",
+            backend="ollama",
+            endpoint="http://local",
+            chat_model="local-m",
         ),
         tactics=TacticsConfig(
             t1_route=t1,
@@ -50,6 +50,7 @@ def _config(*, t2: bool = True, t1: bool = False, t3: bool = False, **t2_params)
 # ---------------------------------------------------------------------------
 # Unit: apply()
 # ---------------------------------------------------------------------------
+
 
 async def test_apply_compresses_long_system_message() -> None:
     local = FakeChatClient(
@@ -185,9 +186,11 @@ async def test_apply_uses_temperature_zero() -> None:
 # Integration: Pipeline.complete with T2
 # ---------------------------------------------------------------------------
 
+
 async def test_pipeline_t2_compresses_before_cloud() -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="answer",
+        chat_model="cloud-m",
+        reply_content="answer",
         usage=Usage(input_tokens=20, output_tokens=5),
     )
     local = FakeChatClient(
@@ -198,10 +201,12 @@ async def test_pipeline_t2_compresses_before_cloud() -> None:
     pipeline = Pipeline(cloud=cloud, local=local, config=_config())
 
     resp = await pipeline.complete(
-        PipelineRequest(messages=[
-            {"role": "system", "content": LONG_SYSTEM},
-            {"role": "user", "content": "question"},
-        ])
+        PipelineRequest(
+            messages=[
+                {"role": "system", "content": LONG_SYSTEM},
+                {"role": "user", "content": "question"},
+            ]
+        )
     )
 
     assert resp.served_by == "cloud"
@@ -221,10 +226,12 @@ async def test_pipeline_t2_disabled_sends_original() -> None:
     pipeline = Pipeline(cloud=cloud, local=local, config=_config(t2=False))
 
     await pipeline.complete(
-        PipelineRequest(messages=[
-            {"role": "system", "content": LONG_SYSTEM},
-            {"role": "user", "content": "q"},
-        ])
+        PipelineRequest(
+            messages=[
+                {"role": "system", "content": LONG_SYSTEM},
+                {"role": "user", "content": "q"},
+            ]
+        )
     )
 
     # Cloud received original messages.
@@ -254,6 +261,7 @@ async def test_pipeline_t2_explicit_hint_bypasses() -> None:
 # Composition: T1 + T2
 # ---------------------------------------------------------------------------
 
+
 async def test_t1_trivial_bypasses_t2() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(
@@ -264,10 +272,12 @@ async def test_t1_trivial_bypasses_t2() -> None:
     pipeline = Pipeline(cloud=cloud, local=local, config=_config(t2=True, t1=True))
 
     resp = await pipeline.complete(
-        PipelineRequest(messages=[
-            {"role": "system", "content": LONG_SYSTEM},
-            {"role": "user", "content": "hi"},
-        ])
+        PipelineRequest(
+            messages=[
+                {"role": "system", "content": LONG_SYSTEM},
+                {"role": "user", "content": "hi"},
+            ]
+        )
     )
 
     assert resp.served_by == "local"
@@ -276,7 +286,8 @@ async def test_t1_trivial_bypasses_t2() -> None:
 
 async def test_t1_complex_then_t2_compresses() -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="answer",
+        chat_model="cloud-m",
+        reply_content="answer",
         usage=Usage(input_tokens=20, output_tokens=5),
     )
     # Call 1: T1 classifier → "COMPLEX"
@@ -289,10 +300,12 @@ async def test_t1_complex_then_t2_compresses() -> None:
     pipeline = Pipeline(cloud=cloud, local=local, config=_config(t2=True, t1=True))
 
     resp = await pipeline.complete(
-        PipelineRequest(messages=[
-            {"role": "system", "content": LONG_SYSTEM},
-            {"role": "user", "content": "question"},
-        ])
+        PipelineRequest(
+            messages=[
+                {"role": "system", "content": LONG_SYSTEM},
+                {"role": "user", "content": "question"},
+            ]
+        )
     )
 
     assert resp.served_by == "cloud"
@@ -308,6 +321,7 @@ async def test_t1_complex_then_t2_compresses() -> None:
 # Composition: T3 + T2
 # ---------------------------------------------------------------------------
 
+
 async def test_t3_hit_bypasses_t2(tmp_path: Path) -> None:
     from local_splitter.pipeline.sem_cache import CacheStore
 
@@ -316,11 +330,11 @@ async def test_t3_hit_bypasses_t2(tmp_path: Path) -> None:
     store = CacheStore(tmp_path / "cache.sqlite", embed_dim=32)
 
     cfg = Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
         local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m",
+            backend="ollama",
+            endpoint="http://local",
+            chat_model="local-m",
             embed_model="nomic-embed-text",
         ),
         tactics=TacticsConfig(

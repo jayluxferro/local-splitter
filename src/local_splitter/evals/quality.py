@@ -101,9 +101,7 @@ async def judge_pair(
     Calls the judge twice: once with baseline as A, once with baseline as B.
     Only consistent verdicts count.
     """
-    prompt = "\n".join(
-        m.get("content", "") for m in sample.messages if m.get("role") == "user"
-    )
+    prompt = "\n".join(m.get("content", "") for m in sample.messages if m.get("role") == "user")
 
     if not baseline.content or not treatment.content:
         return JudgeVerdict(sample_id=sample.id, winner="error")
@@ -179,12 +177,8 @@ def quality_summary(verdicts: list[JudgeVerdict]) -> dict[str, Any]:
         "ties": counts.get("tie", 0),
         "inconsistent": counts.get("inconsistent", 0),
         "errors": counts.get("error", 0),
-        "treatment_win_rate": (
-            counts.get("treatment", 0) / valid if valid > 0 else 0.0
-        ),
-        "baseline_win_rate": (
-            counts.get("baseline", 0) / valid if valid > 0 else 0.0
-        ),
+        "treatment_win_rate": (counts.get("treatment", 0) / valid if valid > 0 else 0.0),
+        "baseline_win_rate": (counts.get("baseline", 0) / valid if valid > 0 else 0.0),
         "tie_rate": counts.get("tie", 0) / valid if valid > 0 else 0.0,
     }
 

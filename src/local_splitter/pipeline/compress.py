@@ -74,9 +74,7 @@ async def apply(
     compress_prompt = COMPRESS_SYSTEM.format(ratio_pct=ratio_pct)
 
     total = len(messages)
-    eligible = [
-        i for i, msg in enumerate(messages) if _is_compressible(msg, i, total, min_len)
-    ]
+    eligible = [i for i, msg in enumerate(messages) if _is_compressible(msg, i, total, min_len)]
 
     if not eligible:
         return CompressResult(
@@ -132,9 +130,7 @@ async def apply(
 
     elapsed = (time.perf_counter() - t_start) * 1000
     actual_ratio = (
-        total_compressed_chars / total_original_chars
-        if total_original_chars > 0
-        else 1.0
+        total_compressed_chars / total_original_chars if total_original_chars > 0 else 1.0
     )
 
     decision = "APPLIED" if n_compressed > 0 else "NOOP"

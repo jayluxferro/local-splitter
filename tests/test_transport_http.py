@@ -53,9 +53,7 @@ def test_list_models_local_only_config() -> None:
     local = FakeChatClient(chat_model="llama3.2:3b")
     cfg = Config(
         cloud=None,
-        local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="llama3.2:3b"
-        ),
+        local=ModelConfig(backend="ollama", endpoint="http://local", chat_model="llama3.2:3b"),
         tactics=TacticsConfig(),
     )
     pipeline = Pipeline(cloud=None, local=local, config=cfg)
@@ -390,7 +388,7 @@ def test_parse_tactics_override() -> None:
     assert _parse_tactics_override({"disable_tactics": ["t2_compress"]}) == frozenset(
         {"t2_compress"}
     )
-    assert _parse_tactics_override(
-        {"disable_tactics": "t1_route, t7_batch "}
-    ) == frozenset({"t1_route", "t7_batch"})
+    assert _parse_tactics_override({"disable_tactics": "t1_route, t7_batch "}) == frozenset(
+        {"t1_route", "t7_batch"}
+    )
     assert _parse_tactics_override({}) is None

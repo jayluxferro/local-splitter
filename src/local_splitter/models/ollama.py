@@ -45,6 +45,8 @@ def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
         return resp.text[:max_len]
     except Exception:
         return f"(undecodable body, {len(resp.content)} bytes)"
+
+
 DEFAULT_NUM_CTX = 8192
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0)
 

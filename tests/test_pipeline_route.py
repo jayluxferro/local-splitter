@@ -29,14 +29,11 @@ from _fakes import FakeChatClient
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _t1_config(*, enabled: bool = True, **params) -> Config:
     return Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
-        local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
+        local=ModelConfig(backend="ollama", endpoint="http://local", chat_model="local-m"),
         tactics=TacticsConfig(
             t1_route=enabled,
             params={"t1_route": params} if params else {},
@@ -50,6 +47,7 @@ _MSGS = [{"role": "user", "content": "what is 2+2?"}]
 # ---------------------------------------------------------------------------
 # Unit: _parse_classification
 # ---------------------------------------------------------------------------
+
 
 class TestParseClassification:
     def test_trivial(self) -> None:
@@ -76,6 +74,7 @@ class TestParseClassification:
 # Unit: _extract_user_text
 # ---------------------------------------------------------------------------
 
+
 class TestExtractUserText:
     def test_single_user_message(self) -> None:
         assert _extract_user_text([{"role": "user", "content": "hi"}]) == "hi"
@@ -95,6 +94,7 @@ class TestExtractUserText:
 # ---------------------------------------------------------------------------
 # Async: classify()
 # ---------------------------------------------------------------------------
+
 
 async def test_classify_trivial() -> None:
     local = FakeChatClient(chat_model="local-m", reply_content="TRIVIAL")
@@ -132,6 +132,7 @@ async def test_classify_model_error_fails_open() -> None:
 # ---------------------------------------------------------------------------
 # Async: apply()
 # ---------------------------------------------------------------------------
+
 
 async def test_apply_trivial_answers_locally() -> None:
     local = FakeChatClient(
@@ -263,6 +264,7 @@ async def test_apply_trivial_threshold_triggers_second_vote() -> None:
 # Integration: Pipeline.complete with T1 enabled
 # ---------------------------------------------------------------------------
 
+
 async def test_pipeline_t1_trivial_routes_locally() -> None:
     local = FakeChatClient(
         chat_model="local-m",
@@ -272,9 +274,7 @@ async def test_pipeline_t1_trivial_routes_locally() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     pipeline = Pipeline(cloud=cloud, local=local, config=_t1_config())
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=_MSGS)
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS))
 
     assert resp.served_by == "local"
     assert resp.content == "local answer"
@@ -328,9 +328,7 @@ async def test_pipeline_t1_skipped_for_explicit_cloud_hint() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     pipeline = Pipeline(cloud=cloud, local=local, config=_t1_config())
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=_MSGS, model_hint="cloud")
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS, model_hint="cloud"))
 
     assert resp.served_by == "cloud"
     assert local.calls == []  # T1 never ran
@@ -344,9 +342,7 @@ async def test_pipeline_t1_skipped_for_explicit_local_hint() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     pipeline = Pipeline(cloud=cloud, local=local, config=_t1_config())
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=_MSGS, model_hint="local")
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS, model_hint="local"))
 
     assert resp.served_by == "local"
     assert resp.content == "direct local"
@@ -370,9 +366,7 @@ async def test_pipeline_t1_disabled_skips_routing() -> None:
 async def test_pipeline_t1_no_local_backend_skips_routing() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     cfg = Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
         tactics=TacticsConfig(t1_route=True),
     )
     pipeline = Pipeline(cloud=cloud, local=None, config=cfg)

@@ -34,10 +34,12 @@ def _config(**tactics_kw) -> Config:
 # T5 diff
 # ===========================================================================
 
+
 class TestDiffApply:
     async def test_edit_request_gets_minimized(self) -> None:
         local = FakeChatClient(
-            chat_model="local-m", reply_content="minimal diff context",
+            chat_model="local-m",
+            reply_content="minimal diff context",
             usage=Usage(input_tokens=50, output_tokens=10),
         )
         msgs = [
@@ -65,19 +67,23 @@ class TestDiffApply:
 class TestDiffPipeline:
     async def test_t5_wired_in_pipeline(self) -> None:
         local = FakeChatClient(
-            chat_model="local-m", reply_content="minimal diff",
+            chat_model="local-m",
+            reply_content="minimal diff",
             usage=Usage(input_tokens=50, output_tokens=10),
         )
         cloud = FakeChatClient(
-            chat_model="cloud-m", reply_content="done",
+            chat_model="cloud-m",
+            reply_content="done",
             usage=Usage(input_tokens=20, output_tokens=5),
         )
         pipeline = Pipeline(cloud=cloud, local=local, config=_config(t5_diff=True))
 
         resp = await pipeline.complete(
-            PipelineRequest(messages=[
-                {"role": "user", "content": f"edit:\n{LONG_CODE}"},
-            ])
+            PipelineRequest(
+                messages=[
+                    {"role": "user", "content": f"edit:\n{LONG_CODE}"},
+                ]
+            )
         )
         assert resp.served_by == "cloud"
         assert any(e.stage == "t5_diff" for e in resp.trace)
@@ -87,16 +93,20 @@ class TestDiffPipeline:
 # T6 intent
 # ===========================================================================
 
+
 class TestIntentApply:
     async def test_extracts_intent_from_long_query(self) -> None:
-        intent_json = json.dumps({
-            "intent": "explain",
-            "target": "monads",
-            "constraints": ["concise"],
-            "query": "What is a monad?",
-        })
+        intent_json = json.dumps(
+            {
+                "intent": "explain",
+                "target": "monads",
+                "constraints": ["concise"],
+                "query": "What is a monad?",
+            }
+        )
         local = FakeChatClient(
-            chat_model="local-m", reply_content=intent_json,
+            chat_model="local-m",
+            reply_content=intent_json,
             usage=Usage(input_tokens=30, output_tokens=15),
         )
         msgs = [{"role": "user", "content": LONG_QUERY}]
@@ -113,7 +123,8 @@ class TestIntentApply:
 
     async def test_bad_json_fails_open(self) -> None:
         local = FakeChatClient(
-            chat_model="local-m", reply_content="not json at all",
+            chat_model="local-m",
+            reply_content="not json at all",
         )
         msgs = [{"role": "user", "content": LONG_QUERY}]
         result = await intent_apply(msgs, local=local)
@@ -130,15 +141,22 @@ class TestIntentApply:
 
 class TestIntentPipeline:
     async def test_t6_wired_in_pipeline(self) -> None:
-        intent_json = json.dumps({
-            "intent": "explain", "target": "x", "constraints": [], "query": "q",
-        })
+        intent_json = json.dumps(
+            {
+                "intent": "explain",
+                "target": "x",
+                "constraints": [],
+                "query": "q",
+            }
+        )
         local = FakeChatClient(
-            chat_model="local-m", reply_content=intent_json,
+            chat_model="local-m",
+            reply_content=intent_json,
             usage=Usage(input_tokens=30, output_tokens=15),
         )
         cloud = FakeChatClient(
-            chat_model="cloud-m", reply_content="answer",
+            chat_model="cloud-m",
+            reply_content="answer",
             usage=Usage(input_tokens=20, output_tokens=5),
         )
         pipeline = Pipeline(cloud=cloud, local=local, config=_config(t6_intent=True))
@@ -184,17 +202,20 @@ class TestBatchApply:
 class TestBatchPipeline:
     async def test_t7_wired_in_pipeline(self) -> None:
         cloud = FakeChatClient(
-            chat_model="cloud-m", reply_content="answer",
+            chat_model="cloud-m",
+            reply_content="answer",
             usage=Usage(input_tokens=20, output_tokens=5),
         )
         local = FakeChatClient(chat_model="local-m")
         pipeline = Pipeline(cloud=cloud, local=local, config=_config(t7_batch=True))
 
         resp = await pipeline.complete(
-            PipelineRequest(messages=[
-                {"role": "system", "content": LONG_SYSTEM},
-                {"role": "user", "content": "hi"},
-            ])
+            PipelineRequest(
+                messages=[
+                    {"role": "system", "content": LONG_SYSTEM},
+                    {"role": "user", "content": "hi"},
+                ]
+            )
         )
         assert any(e.stage == "t7_batch" for e in resp.trace)
         # Cloud received the tagged messages.

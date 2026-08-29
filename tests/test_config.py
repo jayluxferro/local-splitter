@@ -143,14 +143,14 @@ def test_invalid_yaml_rejected(tmp_path: Path) -> None:
 
 def test_load_config_with_explicit_path(tmp_path: Path) -> None:
     p = tmp_path / "c.yaml"
-    p.write_text("version: 1\nmodels:\n  cloud:\n    backend: ollama\n    endpoint: http://x\n    chat_model: m\n")
+    p.write_text(
+        "version: 1\nmodels:\n  cloud:\n    backend: ollama\n    endpoint: http://x\n    chat_model: m\n"
+    )
     c = load_config(p)
     assert c.cloud.backend == "ollama"
 
 
-def test_load_config_uses_env_var(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_config_uses_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "c.yaml"
     p.write_text(
         "version: 1\nmodels:\n  cloud:\n    backend: ollama\n    endpoint: http://y\n    chat_model: n\n"
@@ -162,9 +162,7 @@ def test_load_config_uses_env_var(
     assert c.cloud.endpoint == "http://y"
 
 
-def test_load_config_not_found(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_config_not_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LOCAL_SPLITTER_CONFIG", raising=False)
     with pytest.raises(ConfigError, match="no config file found"):
@@ -179,9 +177,7 @@ def test_tactics_any_enabled() -> None:
 
 
 def test_model_config_defaults() -> None:
-    mc = ModelConfig(
-        backend="ollama", endpoint="http://x", chat_model="m"
-    )
+    mc = ModelConfig(backend="ollama", endpoint="http://x", chat_model="m")
     assert mc.num_ctx == 8192
     assert mc.embed_model is None
     assert mc.api_key_env is None

@@ -44,9 +44,7 @@ class FakeChatClient:
         self._usage = usage
         self._raise = raise_on_complete
         self._reply_seq: list[str] = list(reply_sequence) if reply_sequence else []
-        self._raise_seq: list[Exception | None] = (
-            list(raise_sequence) if raise_sequence else []
-        )
+        self._raise_seq: list[Exception | None] = list(raise_sequence) if raise_sequence else []
         self._embed_dim = embed_dim
 
     async def complete(
@@ -90,9 +88,7 @@ class FakeChatClient:
 
         return gen()
 
-    async def embed(
-        self, texts: Sequence[str], *, model: str | None = None
-    ) -> list[list[float]]:
+    async def embed(self, texts: Sequence[str], *, model: str | None = None) -> list[list[float]]:
         # Produce deterministic embeddings based on text content so that
         # identical texts get identical vectors (useful for cache tests).
         result: list[list[float]] = []

@@ -84,7 +84,9 @@ def apply(
             extra=None,
             events=[
                 StageEvent(
-                    stage="t7_batch", decision="SKIP", ms=elapsed,
+                    stage="t7_batch",
+                    decision="SKIP",
+                    ms=elapsed,
                     detail={"reason": "no system messages long enough to tag"},
                 )
             ],
@@ -95,7 +97,9 @@ def apply(
         extra=None,
         events=[
             StageEvent(
-                stage="t7_batch", decision="APPLIED", ms=elapsed,
+                stage="t7_batch",
+                decision="APPLIED",
+                ms=elapsed,
                 detail={"messages_tagged": n_tagged},
             )
         ],

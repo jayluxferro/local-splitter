@@ -93,9 +93,7 @@ def serve_http(
     ),
     host: str | None = typer.Option(None, "--host", help="Override transport.http_host."),
     port: int | None = typer.Option(None, "--port", help="Override transport.http_port."),
-    upstream: str | None = typer.Option(
-        None, "--upstream", help="Override the cloud upstream URL"
-    ),
+    upstream: str | None = typer.Option(None, "--upstream", help="Override the cloud upstream URL"),
     log_level: str = typer.Option("info", "--log-level"),
 ) -> None:
     """Run the FastAPI OpenAI-compatible proxy."""
@@ -149,12 +147,17 @@ def serve_mcp(
 @app.command("transform")
 def transform_cmd(
     config_path: Path | None = typer.Option(
-        None, "--config", "-c",
+        None,
+        "--config",
+        "-c",
         help="Path to config.yaml.",
-        exists=False, dir_okay=False,
+        exists=False,
+        dir_okay=False,
     ),
     prompt: str | None = typer.Option(
-        None, "--prompt", "-p",
+        None,
+        "--prompt",
+        "-p",
         help="Prompt text (alternative to stdin).",
     ),
     log_level: str = typer.Option("warning", "--log-level"),
@@ -187,7 +190,8 @@ def transform_cmd(
     else:
         typer.secho(
             "error: provide --prompt or pipe input via stdin",
-            fg=typer.colors.RED, err=True,
+            fg=typer.colors.RED,
+            err=True,
         )
         raise typer.Exit(code=1)
 
@@ -319,10 +323,11 @@ def eval_cmd(
 
         # Build a cache store for T3 if needed.
         cache_store = None
-        if config.tactics.t3_sem_cache or (chosen and any(
-            tc.t3_sem_cache for tc in (chosen or TACTIC_SUBSETS).values()
-        )):
+        if config.tactics.t3_sem_cache or (
+            chosen and any(tc.t3_sem_cache for tc in (chosen or TACTIC_SUBSETS).values())
+        ):
             from local_splitter.pipeline.sem_cache import CacheStore
+
             cache_db = output / f"cache_{wl_path.stem}.sqlite"
             embed_dim = 768  # nomic-embed-text default
             cache_store = CacheStore(cache_db, embed_dim=embed_dim)
@@ -372,7 +377,9 @@ def demo_command() -> None:
     typer.echo("  4. uv run pytest -q")
     typer.echo("  5. uv run local-splitter serve-http --config config.yaml")
     typer.echo("\nOptional:")
-    typer.echo("  • uv run python scripts/trace_report.py .local_splitter/eval/runs.jsonl -o /tmp/trace.html")
+    typer.echo(
+        "  • uv run python scripts/trace_report.py .local_splitter/eval/runs.jsonl -o /tmp/trace.html"
+    )
     typer.echo("  • JSON Schemas for MCP tools: schemas/mcp-tools.json")
     typer.echo("  • examples/openai_chat.sh — minimal curl to the proxy")
 

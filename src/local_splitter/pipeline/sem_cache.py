@@ -41,6 +41,7 @@ DEFAULT_CHARS_PER_TOKEN = 4  # conservative: ~4 chars per token for most text
 # Serialization helpers for sqlite-vec float[] columns
 # ---------------------------------------------------------------------------
 
+
 def _serialize(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
 
@@ -48,6 +49,7 @@ def _serialize(vec: list[float]) -> bytes:
 # ---------------------------------------------------------------------------
 # CacheStore — thin wrapper around sqlite + sqlite-vec
 # ---------------------------------------------------------------------------
+
 
 @dataclass(slots=True, frozen=True)
 class CacheEntry:
@@ -315,19 +317,37 @@ async def lookup(
 
     cache_text = _cache_embed_text(messages, p, meta)
     if not cache_text:
-        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
-            StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
-                       detail={"reason": "no user text"})
-        ])
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="SKIP",
+                    ms=0.0,
+                    detail={"reason": "no user text"},
+                )
+            ],
+        )
 
     skip, reason = _should_skip_cache_for_privacy(
-        params=p, meta=meta, cache_text=cache_text, response_text=None,
+        params=p,
+        meta=meta,
+        cache_text=cache_text,
+        response_text=None,
     )
     if skip:
-        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
-            StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
-                       detail={"reason": reason})
-        ])
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup", decision="SKIP", ms=0.0, detail={"reason": reason}
+                )
+            ],
+        )
 
     # Encoded/bloated payloads (e.g. from Palisade transform chains) can
     # exceed the embedding model's context window.  Use the model's actual
@@ -337,12 +357,24 @@ async def lookup(
     model_ctx = getattr(local, "num_ctx", None) or DEFAULT_NUM_CTX
     embed_max = int(p.get("embed_max_chars", model_ctx * DEFAULT_CHARS_PER_TOKEN))
     if len(cache_text) > embed_max:
-        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
-            StageEvent(stage="t3_cache_lookup", decision="SKIP", ms=0.0,
-                       detail={"reason": "cache_text exceeds embedder context",
-                               "length": len(cache_text), "max_chars": embed_max,
-                               "num_ctx": model_ctx})
-        ])
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="SKIP",
+                    ms=0.0,
+                    detail={
+                        "reason": "cache_text exceeds embedder context",
+                        "length": len(cache_text),
+                        "max_chars": embed_max,
+                        "num_ctx": model_ctx,
+                    },
+                )
+            ],
+        )
 
     t0 = time.perf_counter()
     try:
@@ -351,10 +383,19 @@ async def lookup(
     except (ModelBackendError, Exception) as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         _log.warning("T3 embed failed, treating as cache miss: %s", exc)
-        return CacheLookupResult(hit=False, entry=None, embedding=None, events=[
-            StageEvent(stage="t3_cache_lookup", decision="ERROR", ms=elapsed,
-                       detail={"error": str(exc)})
-        ])
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="ERROR",
+                    ms=elapsed,
+                    detail={"error": str(exc)},
+                )
+            ],
+        )
 
     embed_ms = (time.perf_counter() - t0) * 1000
 
@@ -364,22 +405,43 @@ async def lookup(
     except Exception as exc:
         elapsed = embed_ms + (time.perf_counter() - t1) * 1000
         _log.warning("T3 cache lookup failed, treating as miss: %s", exc)
-        return CacheLookupResult(hit=False, entry=None, embedding=embedding, events=[
-            StageEvent(stage="t3_cache_lookup", decision="ERROR",
-                       ms=elapsed, detail={"error": str(exc)})
-        ])
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=embedding,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="ERROR",
+                    ms=elapsed,
+                    detail={"error": str(exc)},
+                )
+            ],
+        )
 
     total_ms = embed_ms + (time.perf_counter() - t1) * 1000
 
     if entry is not None:
-        return CacheLookupResult(hit=True, entry=entry, embedding=embedding, events=[
-            StageEvent(stage="t3_cache_lookup", decision="HIT", ms=total_ms,
-                       detail={"similarity": round(entry.similarity, 4)})
-        ])
+        return CacheLookupResult(
+            hit=True,
+            entry=entry,
+            embedding=embedding,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="HIT",
+                    ms=total_ms,
+                    detail={"similarity": round(entry.similarity, 4)},
+                )
+            ],
+        )
 
-    return CacheLookupResult(hit=False, entry=None, embedding=embedding, events=[
-        StageEvent(stage="t3_cache_lookup", decision="MISS", ms=total_ms)
-    ])
+    return CacheLookupResult(
+        hit=False,
+        entry=None,
+        embedding=embedding,
+        events=[StageEvent(stage="t3_cache_lookup", decision="MISS", ms=total_ms)],
+    )
 
 
 def store_response(
@@ -400,7 +462,10 @@ def store_response(
     p = params or {}
     ct = cache_text or ""
     skip, reason = _should_skip_cache_for_privacy(
-        params=p, meta=meta, cache_text=ct, response_text=response,
+        params=p,
+        meta=meta,
+        cache_text=ct,
+        response_text=response,
     )
     if skip:
         return StageEvent(
@@ -412,14 +477,14 @@ def store_response(
 
     t0 = time.perf_counter()
     try:
-        cache_store.store(
-            embedding, response=response, model=model, finish_reason=finish_reason
-        )
+        cache_store.store(embedding, response=response, model=model, finish_reason=finish_reason)
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         _log.warning("T3 cache store failed: %s", exc)
         return StageEvent(
-            stage="t3_cache_store", decision="ERROR", ms=elapsed,
+            stage="t3_cache_store",
+            decision="ERROR",
+            ms=elapsed,
             detail={"error": str(exc)},
         )
 

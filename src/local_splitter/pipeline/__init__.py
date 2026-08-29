@@ -106,11 +106,7 @@ class _Stats:
             p99 = _percentile(sorted_l, 0.99)
 
         hints: list[str] = []
-        if (
-            adaptive
-            and adaptive.enabled
-            and self.total_requests >= adaptive.min_requests
-        ):
+        if adaptive and adaptive.enabled and self.total_requests >= adaptive.min_requests:
             localish = self.by_served.get("local", 0) + self.by_served.get("cache", 0)
             frac = localish / max(1, self.total_requests)
             if frac > adaptive.max_local_fraction:
@@ -230,16 +226,10 @@ class Pipeline:
         has_local = self.local is not None
         t3_params = tac.params.get("t3_sem_cache") or {}
         meta_dict = dict(request.meta)
-        cache_key_text = _sem_cache.cache_embed_source(
-            request.messages, t3_params, meta_dict
-        )
+        cache_key_text = _sem_cache.cache_embed_source(request.messages, t3_params, meta_dict)
 
         # --- T4 draft-review (auto requests, replaces direct cloud call) ---
-        if (
-            tac.t4_draft
-            and has_local
-            and request.model_hint == "auto"
-        ):
+        if tac.t4_draft and has_local and request.model_hint == "auto":
             draft_result = await _draft.apply(
                 messages_for_backend,
                 local=self.local,  # type: ignore[arg-type]
@@ -388,9 +378,7 @@ class Pipeline:
             return request.messages, trace, pc.t3_cache_entry.response
         return pc.messages, trace, None
 
-    async def stream(
-        self, request: PipelineRequest
-    ) -> AsyncIterator[StreamChunk]:
+    async def stream(self, request: PipelineRequest) -> AsyncIterator[StreamChunk]:
         """Run pre-cloud transforms, then stream the cloud response.
 
         Tactics T1 (route-local), T3 (cache hit), and T4 (draft-review)
@@ -503,9 +491,7 @@ class Pipeline:
                 )
             )
 
-    def _choose_backend(
-        self, hint: ModelHint
-    ) -> tuple[ChatClient, ServedBy, str]:
+    def _choose_backend(self, hint: ModelHint) -> tuple[ChatClient, ServedBy, str]:
         """Pick a backend given a model_hint.
 
         When T1 is enabled ``auto`` requests are routed by the T1 stage
@@ -515,9 +501,7 @@ class Pipeline:
         """
         if hint == "local":
             if self.local is None:
-                raise PipelineError(
-                    "model_hint=local but no local backend is configured"
-                )
+                raise PipelineError("model_hint=local but no local backend is configured")
             return self.local, "local", "local_call"
         # auto or cloud
         if self.cloud is None:

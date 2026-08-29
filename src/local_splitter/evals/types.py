@@ -104,6 +104,7 @@ class RunResult:
 # JSONL I/O for workloads
 # ---------------------------------------------------------------------------
 
+
 def load_workload(path: Path) -> list[WorkloadSample]:
     """Load samples from a JSONL file (one JSON object per line)."""
     samples: list[WorkloadSample] = []
@@ -127,6 +128,7 @@ def save_workload(samples: list[WorkloadSample], path: Path) -> None:
 # ---------------------------------------------------------------------------
 # JSONL I/O for results
 # ---------------------------------------------------------------------------
+
 
 def append_results_jsonl(
     results: list[SampleResult],

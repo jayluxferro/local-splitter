@@ -88,12 +88,7 @@ async def run_pre_cloud(
                 t3_cache_entry=None,
             )
 
-    t3_active = (
-        tactics.t3_sem_cache
-        and has_local
-        and cache_store is not None
-        and auto_route
-    )
+    t3_active = tactics.t3_sem_cache and has_local and cache_store is not None and auto_route
 
     # --- T3 lookup ---
     if t3_active:

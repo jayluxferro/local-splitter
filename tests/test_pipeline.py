@@ -46,9 +46,7 @@ async def test_passthrough_forwards_to_cloud_and_records_usage() -> None:
     cloud = FakeChatClient(chat_model="cloud-model")
     pipeline = Pipeline(cloud=cloud, local=None, config=_cloud_only_config())
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=[{"role": "user", "content": "hi"}])
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": "hi"}]))
 
     assert resp.content == "hello"
     assert resp.served_by == "cloud"
@@ -69,9 +67,7 @@ async def test_model_hint_local_uses_local_backend() -> None:
     pipeline = Pipeline(cloud=cloud, local=local, config=_dual_config())
 
     resp = await pipeline.complete(
-        PipelineRequest(
-            messages=[{"role": "user", "content": "hi"}], model_hint="local"
-        )
+        PipelineRequest(messages=[{"role": "user", "content": "hi"}], model_hint="local")
     )
 
     assert resp.served_by == "local"
@@ -89,9 +85,7 @@ async def test_model_hint_local_without_local_backend_raises() -> None:
     pipeline = Pipeline(cloud=cloud, local=None, config=_cloud_only_config())
     with pytest.raises(PipelineError, match="no local backend"):
         await pipeline.complete(
-            PipelineRequest(
-                messages=[{"role": "user", "content": "x"}], model_hint="local"
-            )
+            PipelineRequest(messages=[{"role": "user", "content": "x"}], model_hint="local")
         )
 
 
@@ -99,9 +93,7 @@ async def test_backend_error_is_recorded_in_trace_and_reraised() -> None:
     cloud = FakeChatClient(raise_on_complete=ModelBackendError("500 oops"))
     pipeline = Pipeline(cloud=cloud, local=None, config=_cloud_only_config())
     with pytest.raises(ModelBackendError, match="500 oops"):
-        await pipeline.complete(
-            PipelineRequest(messages=[{"role": "user", "content": "x"}])
-        )
+        await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": "x"}]))
 
 
 async def test_stats_accumulate_across_calls() -> None:
@@ -109,9 +101,7 @@ async def test_stats_accumulate_across_calls() -> None:
     pipeline = Pipeline(cloud=cloud, local=None, config=_cloud_only_config())
 
     for _ in range(3):
-        await pipeline.complete(
-            PipelineRequest(messages=[{"role": "user", "content": "x"}])
-        )
+        await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": "x"}]))
 
     snap = pipeline.stats()
     assert snap.total_requests == 3
@@ -132,9 +122,7 @@ async def test_stats_split_between_local_and_cloud() -> None:
 
     await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": "a"}]))
     await pipeline.complete(
-        PipelineRequest(
-            messages=[{"role": "user", "content": "b"}], model_hint="local"
-        )
+        PipelineRequest(messages=[{"role": "user", "content": "b"}], model_hint="local")
     )
 
     snap = pipeline.stats()
@@ -152,9 +140,7 @@ async def test_t1_enabled_without_local_falls_through_to_cloud() -> None:
     )
     cloud = FakeChatClient()
     pipeline = Pipeline(cloud=cloud, local=None, config=cfg)
-    resp = await pipeline.complete(
-        PipelineRequest(messages=[{"role": "user", "content": "x"}])
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": "x"}]))
     assert resp.served_by == "cloud"
     assert len(cloud.calls) == 1
 

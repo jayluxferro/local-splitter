@@ -135,10 +135,16 @@ def _anthropic_apply_string_chain(
 # accept-encoding is capability-bound: this proxy consumes upstream bytes
 # before re-serving, so it must not advertise encodings its own httpx cannot
 # decode (br/zstd) — httpx re-adds its own capability set on send.
-_HOP_HEADERS = frozenset({
-    "host", "transfer-encoding", "connection",
-    "content-length", "content-encoding", "accept-encoding",
-})
+_HOP_HEADERS = frozenset(
+    {
+        "host",
+        "transfer-encoding",
+        "connection",
+        "content-length",
+        "content-encoding",
+        "accept-encoding",
+    }
+)
 
 
 def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
@@ -163,8 +169,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
         # Forward all headers from the incoming request (minus hop-by-hop).
         upstream_headers = {
-            k: v for k, v in request.headers.items()
-            if k.lower() not in _HOP_HEADERS
+            k: v for k, v in request.headers.items() if k.lower() not in _HOP_HEADERS
         }
 
         # Tool-bearing requests bypass the pipeline (which can't represent
@@ -183,7 +188,8 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             ):
                 tact_ov = _parse_tactics_override(sp_tools)
                 compressed, _ = await pipeline.compress_messages_only(
-                    msgs_for_tools, tactics_override=tact_ov,
+                    msgs_for_tools,
+                    tactics_override=tact_ov,
                 )
                 body = {**body, "messages": compressed}
             if (
@@ -207,7 +213,9 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             if config.cloud is not None:
                 t0 = time.perf_counter()
                 resp = await _transparent_openai_proxy(
-                    body, config.cloud.endpoint, upstream_headers,
+                    body,
+                    config.cloud.endpoint,
+                    upstream_headers,
                 )
                 # For streams this is time-to-headers, not full stream duration.
                 pipeline.record_bypass(
@@ -222,9 +230,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
-            raise HTTPException(
-                status_code=400, detail="messages must be a non-empty list"
-            )
+            raise HTTPException(status_code=400, detail="messages must be a non-empty list")
 
         extra_body = body.get("extra_body") or {}
         splitter_opts = extra_body.get("splitter") or {}
@@ -329,8 +335,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
 
         # Forward all headers from the incoming request (minus hop-by-hop).
         upstream_headers = {
-            k: v for k, v in request.headers.items()
-            if k.lower() not in _HOP_HEADERS
+            k: v for k, v in request.headers.items() if k.lower() not in _HOP_HEADERS
         }
 
         splitter_opts = body.get("splitter") or {}
@@ -348,7 +353,8 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
             if chain is not None and _openai_messages_compress_safe(chain):
                 tact_ov = _parse_tactics_override(splitter_opts)
                 compressed, _ = await pipeline.compress_messages_only(
-                    chain, tactics_override=tact_ov,
+                    chain,
+                    tactics_override=tact_ov,
                 )
                 nb = _anthropic_apply_string_chain(body, compressed)
                 if nb is not None:
@@ -367,7 +373,9 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 try:
                     t0 = time.perf_counter()
                     resp = await _local_tool_proxy(
-                        body, config.local, upstream_headers,
+                        body,
+                        config.local,
+                        upstream_headers,
                     )
                 except Exception as exc:
                     _log.warning("local tool proxy failed, falling back to cloud: %s", exc)
@@ -380,9 +388,7 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                     )
                     return resp
             if config.cloud is not None:
-                forward_bytes = (
-                    json.dumps(body).encode() if body_modified else raw_body
-                )
+                forward_bytes = json.dumps(body).encode() if body_modified else raw_body
                 t0 = time.perf_counter()
                 resp = await _transparent_proxy(
                     forward_bytes,
@@ -491,10 +497,7 @@ async def _transparent_proxy(
             error_body = await resp.aread()
             await resp.aclose()
             await client.aclose()
-            resp_headers = {
-                k: v for k, v in resp.headers.items()
-                if k.lower() not in _HOP_HEADERS
-            }
+            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in _HOP_HEADERS}
             if not resp_headers.get("content-type"):
                 resp_headers["content-type"] = "application/octet-stream"
             return Response(
@@ -553,7 +556,8 @@ async def _transparent_proxy(
         )
 
     resp_headers = {
-        k: v for k, v in resp.headers.items()
+        k: v
+        for k, v in resp.headers.items()
         if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
     }
     return Response(
@@ -567,14 +571,16 @@ def _anthropic_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, An
     """Convert Anthropic tool definitions to OpenAI/Ollama format."""
     out = []
     for t in tools:
-        out.append({
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("input_schema", {}),
-            },
-        })
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("input_schema", {}),
+                },
+            }
+        )
     return out
 
 
@@ -589,8 +595,12 @@ def _anthropic_messages_to_openai(
 
     system = body.get("system")
     if system:
-        text = system if isinstance(system, str) else " ".join(
-            b.get("text", "") for b in system if isinstance(b, dict) and b.get("type") == "text"
+        text = (
+            system
+            if isinstance(system, str)
+            else " ".join(
+                b.get("text", "") for b in system if isinstance(b, dict) and b.get("type") == "text"
+            )
         )
         msgs.append({"role": "system", "content": text})
 
@@ -616,33 +626,40 @@ def _anthropic_messages_to_openai(
             if btype == "text":
                 text_parts.append(block.get("text", ""))
             elif btype == "tool_use":
-                tool_calls.append({
-                    "id": block.get("id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": block.get("name", ""),
-                        "arguments": json.dumps(block.get("input", {})),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                )
             elif btype == "tool_result":
                 result_content = block.get("content", "")
                 if isinstance(result_content, list):
                     result_content = " ".join(
-                        b.get("text", "") for b in result_content
+                        b.get("text", "")
+                        for b in result_content
                         if isinstance(b, dict) and b.get("type") == "text"
                     )
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": block.get("tool_use_id", ""),
-                    "content": str(result_content),
-                })
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": block.get("tool_use_id", ""),
+                        "content": str(result_content),
+                    }
+                )
 
         if role == "assistant" and tool_calls:
-            msgs.append({
-                "role": "assistant",
-                "content": "\n".join(text_parts) if text_parts else "",
-                "tool_calls": tool_calls,
-            })
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": "\n".join(text_parts) if text_parts else "",
+                    "tool_calls": tool_calls,
+                }
+            )
         elif tool_results:
             # tool_result blocks come inside a user message in Anthropic format;
             # in OpenAI format they become separate tool-role messages.
@@ -675,12 +692,14 @@ def _openai_response_to_anthropic(
                 args = json.loads(args)
             except json.JSONDecodeError:
                 pass
-        content_blocks.append({
-            "type": "tool_use",
-            "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
-            "name": func.get("name", ""),
-            "input": args,
-        })
+        content_blocks.append(
+            {
+                "type": "tool_use",
+                "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
+                "name": func.get("name", ""),
+                "input": args,
+            }
+        )
 
     if not content_blocks:
         content_blocks.append({"type": "text", "text": ""})
@@ -781,23 +800,26 @@ async def _local_openai_tool_proxy(
     message = data.get("message", {})
 
     # Build OpenAI-compatible response from ollama response.
-    return JSONResponse({
-        "id": f"chatcmpl-{uuid.uuid4().hex}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": body.get("model", data.get("model", "")),
-        "choices": [{
-            "index": 0,
-            "message": message,
-            "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
-        }],
-        "usage": {
-            "prompt_tokens": data.get("prompt_eval_count", 0),
-            "completion_tokens": data.get("eval_count", 0),
-            "total_tokens": (data.get("prompt_eval_count", 0)
-                             + data.get("eval_count", 0)),
-        },
-    })
+    return JSONResponse(
+        {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": body.get("model", data.get("model", "")),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": data.get("prompt_eval_count", 0),
+                "completion_tokens": data.get("eval_count", 0),
+                "total_tokens": (data.get("prompt_eval_count", 0) + data.get("eval_count", 0)),
+            },
+        }
+    )
 
 
 async def _transparent_openai_proxy(
@@ -835,10 +857,7 @@ async def _transparent_openai_proxy(
             error_body = await resp.aread()
             await resp.aclose()
             await client.aclose()
-            resp_headers = {
-                k: v for k, v in resp.headers.items()
-                if k.lower() not in _HOP_HEADERS
-            }
+            resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in _HOP_HEADERS}
             if not resp_headers.get("content-type"):
                 resp_headers["content-type"] = "application/octet-stream"
             return Response(
@@ -885,7 +904,8 @@ async def _transparent_openai_proxy(
         resp = await client.post(url, json=body, headers=headers)
 
     resp_headers = {
-        k: v for k, v in resp.headers.items()
+        k: v
+        for k, v in resp.headers.items()
         if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
     }
     return Response(
@@ -895,9 +915,7 @@ async def _transparent_openai_proxy(
     )
 
 
-async def _sse_generator(
-    pipeline: Pipeline, req: PipelineRequest, request_model: str | None
-):
+async def _sse_generator(pipeline: Pipeline, req: PipelineRequest, request_model: str | None):
     """Yield OpenAI-compatible SSE chunks from the pipeline's stream."""
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -925,7 +943,8 @@ async def _sse_generator(
                 data["usage"] = {
                     "prompt_tokens": chunk.usage.input_tokens or 0,
                     "completion_tokens": chunk.usage.output_tokens or 0,
-                    "total_tokens": (chunk.usage.input_tokens or 0) + (chunk.usage.output_tokens or 0),
+                    "total_tokens": (chunk.usage.input_tokens or 0)
+                    + (chunk.usage.output_tokens or 0),
                 }
             yield f"data: {json.dumps(data)}\n\n"
     except (PipelineError, ModelBackendError) as e:
@@ -936,9 +955,7 @@ async def _sse_generator(
             nbytes,
             detail,
         )
-        error_data: dict[str, Any] = {
-            "error": {"message": detail, "type": type(e).__name__}
-        }
+        error_data: dict[str, Any] = {"error": {"message": detail, "type": type(e).__name__}}
         if isinstance(e, ModelBackendError) and e.retry_after_seconds is not None:
             error_data["error"]["retry_after_seconds"] = e.retry_after_seconds
         yield f"data: {json.dumps(error_data)}\n\n"
@@ -1079,8 +1096,12 @@ async def _anthropic_sse_generator(
 
     # message_start
     start_msg = {
-        "id": msg_id, "type": "message", "role": "assistant",
-        "content": [], "model": model, "stop_reason": None,
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": model,
+        "stop_reason": None,
         "usage": {"input_tokens": 0, "output_tokens": 0},
     }
     yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': start_msg})}\n\n"
@@ -1104,12 +1125,8 @@ async def _anthropic_sse_generator(
                 yield f"event: content_block_delta\ndata: {json.dumps(delta_event)}\n\n"
 
             if chunk.done:
-                stop_reason = _STOP_REASON_MAP.get(
-                    chunk.finish_reason or "stop", "end_turn"
-                )
-                output_tokens = (
-                    chunk.usage.output_tokens if chunk.usage else total_output
-                )
+                stop_reason = _STOP_REASON_MAP.get(chunk.finish_reason or "stop", "end_turn")
+                output_tokens = chunk.usage.output_tokens if chunk.usage else total_output
 
                 # content_block_stop
                 yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"

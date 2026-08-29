@@ -31,24 +31,42 @@ Classification = Literal["TRIVIAL", "COMPLEX"]
 CLASSIFIER_FEWSHOT: list[Message] = [
     {"role": "user", "content": "Classify: What is 2+2? Answer TRIVIAL or COMPLEX only."},
     {"role": "assistant", "content": "TRIVIAL"},
-    {"role": "user", "content": "Classify: Design a distributed consensus algorithm for a multi-region database. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Design a distributed consensus algorithm for a multi-region database. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "COMPLEX"},
-    {"role": "user", "content": "Classify: Rename variable x to count. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Rename variable x to count. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "TRIVIAL"},
-    {"role": "user", "content": "Classify: Refactor the auth module to support OAuth2 with PKCE flow across three services. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Refactor the auth module to support OAuth2 with PKCE flow across three services. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "COMPLEX"},
 ]
 
 # Second-pass classifier uses a different few-shot order to decorrelate errors
 # when ``verify_trivial`` is enabled (two TRIVIAL votes required).
 CLASSIFIER_FEWSHOT_B: list[Message] = [
-    {"role": "user", "content": "Classify: Refactor the auth module to support OAuth2 with PKCE flow across three services. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Refactor the auth module to support OAuth2 with PKCE flow across three services. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "COMPLEX"},
     {"role": "user", "content": "Classify: What is 2+2? Answer TRIVIAL or COMPLEX only."},
     {"role": "assistant", "content": "TRIVIAL"},
-    {"role": "user", "content": "Classify: Design a distributed consensus algorithm for a multi-region database. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Design a distributed consensus algorithm for a multi-region database. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "COMPLEX"},
-    {"role": "user", "content": "Classify: Rename variable x to count. Answer TRIVIAL or COMPLEX only."},
+    {
+        "role": "user",
+        "content": "Classify: Rename variable x to count. Answer TRIVIAL or COMPLEX only.",
+    },
     {"role": "assistant", "content": "TRIVIAL"},
 ]
 
@@ -96,9 +114,7 @@ def _parse_classification(raw: str) -> Classification:
     match = _DECISION_RE.search(raw)
     if match:
         return match.group(1).upper()  # type: ignore[return-value]
-    _log.warning(
-        "T1 classifier returned unparseable output: %r; defaulting to COMPLEX", raw
-    )
+    _log.warning("T1 classifier returned unparseable output: %r; defaulting to COMPLEX", raw)
     return "COMPLEX"
 
 
@@ -200,9 +216,7 @@ async def apply(
             ],
         )
 
-    classification, classify_event = await classify(
-        messages, local=local, params=params, variant=0
-    )
+    classification, classify_event = await classify(messages, local=local, params=params, variant=0)
     events: list[StageEvent] = [classify_event]
 
     if classification != "TRIVIAL":

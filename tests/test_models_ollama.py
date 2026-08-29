@@ -48,9 +48,7 @@ async def test_complete_happy_path_sets_num_ctx_and_parses_usage() -> None:
         )
     )
 
-    async with OllamaClient(
-        chat_model="llama3.2:3b", transport=transport
-    ) as client:
+    async with OllamaClient(chat_model="llama3.2:3b", transport=transport) as client:
         reply = await client.complete(
             [{"role": "user", "content": "hi"}],
             temperature=0.0,
@@ -103,9 +101,7 @@ async def test_complete_caller_can_override_num_ctx_via_extra() -> None:
 
 
 async def test_complete_raises_on_non_200() -> None:
-    transport = httpx.MockTransport(
-        lambda req: httpx.Response(500, text="boom")
-    )
+    transport = httpx.MockTransport(lambda req: httpx.Response(500, text="boom"))
     async with OllamaClient(chat_model="m", transport=transport) as c:
         with pytest.raises(ModelBackendError, match="500"):
             await c.complete([{"role": "user", "content": "x"}])
@@ -212,8 +208,6 @@ async def test_embed_empty_input_returns_empty_without_call() -> None:
         return httpx.Response(200, json={"embeddings": []})
 
     transport = httpx.MockTransport(handler)
-    async with OllamaClient(
-        chat_model="m", embed_model="e", transport=transport
-    ) as c:
+    async with OllamaClient(chat_model="m", embed_model="e", transport=transport) as c:
         assert await c.embed([]) == []
     assert calls == []

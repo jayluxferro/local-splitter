@@ -38,6 +38,7 @@ from _fakes import FakeChatClient
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _samples(n: int = 5, workload: str = "wl_test") -> list[WorkloadSample]:
     return [
         WorkloadSample(
@@ -52,12 +53,8 @@ def _samples(n: int = 5, workload: str = "wl_test") -> list[WorkloadSample]:
 
 def _base_config(*, t1: bool = False) -> Config:
     return Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
-        local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
+        local=ModelConfig(backend="ollama", endpoint="http://local", chat_model="local-m"),
         tactics=TacticsConfig(t1_route=t1),
     )
 
@@ -65,6 +62,7 @@ def _base_config(*, t1: bool = False) -> Config:
 # ---------------------------------------------------------------------------
 # types: WorkloadSample serialization
 # ---------------------------------------------------------------------------
+
 
 class TestWorkloadIO:
     def test_round_trip_jsonl(self, tmp_path: Path) -> None:
@@ -94,20 +92,31 @@ class TestWorkloadIO:
 # metrics: compute_summary
 # ---------------------------------------------------------------------------
 
+
 class TestComputeSummary:
     def test_basic_aggregation(self) -> None:
         results = [
             SampleResult(
-                sample_id="s1", content="a", served_by="cloud",
-                tokens_in_cloud=100, tokens_out_cloud=20,
-                tokens_in_local=0, tokens_out_local=0,
-                latency_ms=10.0, trace=[],
+                sample_id="s1",
+                content="a",
+                served_by="cloud",
+                tokens_in_cloud=100,
+                tokens_out_cloud=20,
+                tokens_in_local=0,
+                tokens_out_local=0,
+                latency_ms=10.0,
+                trace=[],
             ),
             SampleResult(
-                sample_id="s2", content="b", served_by="local",
-                tokens_in_cloud=0, tokens_out_cloud=0,
-                tokens_in_local=15, tokens_out_local=5,
-                latency_ms=5.0, trace=[],
+                sample_id="s2",
+                content="b",
+                served_by="local",
+                tokens_in_cloud=0,
+                tokens_out_cloud=0,
+                tokens_in_local=15,
+                tokens_out_local=5,
+                latency_ms=5.0,
+                trace=[],
             ),
         ]
         s = compute_summary(results)
@@ -123,10 +132,16 @@ class TestComputeSummary:
     def test_errors_counted(self) -> None:
         results = [
             SampleResult(
-                sample_id="s1", content="", served_by="error",
-                tokens_in_cloud=0, tokens_out_cloud=0,
-                tokens_in_local=0, tokens_out_local=0,
-                latency_ms=0.0, trace=[], error="boom",
+                sample_id="s1",
+                content="",
+                served_by="error",
+                tokens_in_cloud=0,
+                tokens_out_cloud=0,
+                tokens_in_local=0,
+                tokens_out_local=0,
+                latency_ms=0.0,
+                trace=[],
+                error="boom",
             ),
         ]
         s = compute_summary(results)
@@ -137,32 +152,45 @@ class TestComputeSummary:
 # metrics: token_savings_pct
 # ---------------------------------------------------------------------------
 
+
 class TestTokenSavings:
     def test_fifty_percent_savings(self) -> None:
-        baseline = compute_summary([
-            SampleResult("s1", "a", "cloud", 100, 100, 0, 0, 10.0, []),
-        ])
-        treatment = compute_summary([
-            SampleResult("s1", "a", "cloud", 50, 50, 10, 5, 10.0, []),
-        ])
+        baseline = compute_summary(
+            [
+                SampleResult("s1", "a", "cloud", 100, 100, 0, 0, 10.0, []),
+            ]
+        )
+        treatment = compute_summary(
+            [
+                SampleResult("s1", "a", "cloud", 50, 50, 10, 5, 10.0, []),
+            ]
+        )
         assert token_savings_pct(baseline, treatment) == 50.0
 
     def test_hundred_percent_savings(self) -> None:
-        baseline = compute_summary([
-            SampleResult("s1", "a", "cloud", 100, 50, 0, 0, 10.0, []),
-        ])
-        treatment = compute_summary([
-            SampleResult("s1", "a", "local", 0, 0, 20, 10, 5.0, []),
-        ])
+        baseline = compute_summary(
+            [
+                SampleResult("s1", "a", "cloud", 100, 50, 0, 0, 10.0, []),
+            ]
+        )
+        treatment = compute_summary(
+            [
+                SampleResult("s1", "a", "local", 0, 0, 20, 10, 5.0, []),
+            ]
+        )
         assert token_savings_pct(baseline, treatment) == 100.0
 
     def test_zero_baseline_returns_zero(self) -> None:
-        baseline = compute_summary([
-            SampleResult("s1", "a", "local", 0, 0, 10, 5, 10.0, []),
-        ])
-        treatment = compute_summary([
-            SampleResult("s1", "a", "local", 0, 0, 10, 5, 10.0, []),
-        ])
+        baseline = compute_summary(
+            [
+                SampleResult("s1", "a", "local", 0, 0, 10, 5, 10.0, []),
+            ]
+        )
+        treatment = compute_summary(
+            [
+                SampleResult("s1", "a", "local", 0, 0, 10, 5, 10.0, []),
+            ]
+        )
         assert token_savings_pct(baseline, treatment) == 0.0
 
 
@@ -170,24 +198,30 @@ class TestTokenSavings:
 # metrics: cost_estimate
 # ---------------------------------------------------------------------------
 
+
 class TestCostEstimate:
     def test_cloud_only_cost(self) -> None:
-        s = compute_summary([
-            SampleResult("s1", "a", "cloud", 1_000_000, 1_000_000, 0, 0, 10.0, []),
-        ])
+        s = compute_summary(
+            [
+                SampleResult("s1", "a", "cloud", 1_000_000, 1_000_000, 0, 0, 10.0, []),
+            ]
+        )
         # 1M input @ $0.15 + 1M output @ $0.60 = $0.75
         assert abs(cost_estimate(s) - 0.75) < 1e-9
 
     def test_local_is_free_by_default(self) -> None:
-        s = compute_summary([
-            SampleResult("s1", "a", "local", 0, 0, 1_000_000, 1_000_000, 10.0, []),
-        ])
+        s = compute_summary(
+            [
+                SampleResult("s1", "a", "local", 0, 0, 1_000_000, 1_000_000, 10.0, []),
+            ]
+        )
         assert cost_estimate(s) == 0.0
 
 
 # ---------------------------------------------------------------------------
 # metrics: routing_accuracy
 # ---------------------------------------------------------------------------
+
 
 class TestRoutingAccuracy:
     def test_perfect_accuracy(self) -> None:
@@ -229,9 +263,11 @@ class TestRoutingAccuracy:
 # runner: run_single
 # ---------------------------------------------------------------------------
 
+
 async def test_run_single_collects_all_samples() -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="cloud answer",
+        chat_model="cloud-m",
+        reply_content="cloud answer",
         usage=Usage(input_tokens=20, output_tokens=5),
     )
     pipeline = Pipeline(cloud=cloud, local=None, config=_base_config())
@@ -252,8 +288,11 @@ async def test_run_single_logs_to_jsonl(tmp_path: Path) -> None:
     log = tmp_path / "runs.jsonl"
 
     await run_single(
-        _samples(2), pipeline=pipeline, run_id="test_run",
-        subset_name="baseline", log_path=log,
+        _samples(2),
+        pipeline=pipeline,
+        run_id="test_run",
+        subset_name="baseline",
+        log_path=log,
     )
 
     lines = log.read_text().strip().split("\n")
@@ -281,9 +320,11 @@ async def test_run_single_handles_pipeline_error() -> None:
 # runner: run_matrix
 # ---------------------------------------------------------------------------
 
+
 async def test_run_matrix_baseline_and_t1() -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="cloud answer",
+        chat_model="cloud-m",
+        reply_content="cloud answer",
         usage=Usage(input_tokens=50, output_tokens=10),
     )
     # Local client: classifier always returns "TRIVIAL", then answers.
@@ -298,7 +339,10 @@ async def test_run_matrix_baseline_and_t1() -> None:
         "T1_only": TacticsConfig(t1_route=True),
     }
     runs = await run_matrix(
-        samples, cloud=cloud, local=local, base_config=_base_config(),
+        samples,
+        cloud=cloud,
+        local=local,
+        base_config=_base_config(),
         subsets=subsets,
     )
 
@@ -310,7 +354,7 @@ async def test_run_matrix_baseline_and_t1() -> None:
     baseline = runs[0]
     assert baseline.summary.served_by.get("cloud", 0) == 5
     assert baseline.summary.tokens_in_cloud == 250  # 5 × 50
-    assert baseline.summary.tokens_out_cloud == 50   # 5 × 10
+    assert baseline.summary.tokens_out_cloud == 50  # 5 × 10
 
     # T1: everything classified TRIVIAL, served locally.
     t1 = runs[1]
@@ -337,8 +381,11 @@ async def test_run_matrix_baseline_always_first() -> None:
         "baseline": TacticsConfig(),
     }
     runs = await run_matrix(
-        samples, cloud=cloud, local=local,
-        base_config=_base_config(), subsets=subsets,
+        samples,
+        cloud=cloud,
+        local=local,
+        base_config=_base_config(),
+        subsets=subsets,
     )
 
     assert runs[0].subset_name == "baseline"
@@ -349,7 +396,9 @@ async def test_run_matrix_logs_to_file(tmp_path: Path) -> None:
     log = tmp_path / "runs.jsonl"
 
     await run_matrix(
-        _samples(2), cloud=cloud, local=None,
+        _samples(2),
+        cloud=cloud,
+        local=None,
         base_config=_base_config(),
         subsets={"baseline": TacticsConfig()},
         log_path=log,
@@ -363,14 +412,20 @@ async def test_run_matrix_logs_to_file(tmp_path: Path) -> None:
 # report: CSV
 # ---------------------------------------------------------------------------
 
+
 class TestCSVReport:
     def _make_run(self, subset: str, cloud_in: int, cloud_out: int) -> RunResult:
         results = [
             SampleResult(
-                "s1", "a", "cloud" if cloud_in > 0 else "local",
-                cloud_in, cloud_out,
-                0 if cloud_in > 0 else 15, 0 if cloud_in > 0 else 5,
-                10.0, [],
+                "s1",
+                "a",
+                "cloud" if cloud_in > 0 else "local",
+                cloud_in,
+                cloud_out,
+                0 if cloud_in > 0 else 15,
+                0 if cloud_in > 0 else 5,
+                10.0,
+                [],
             )
         ]
         return RunResult(
@@ -407,6 +462,7 @@ class TestCSVReport:
 # report: comparison_table
 # ---------------------------------------------------------------------------
 
+
 class TestComparisonTable:
     def test_markdown_table_structure(self) -> None:
         results_base = [
@@ -416,12 +472,22 @@ class TestComparisonTable:
             SampleResult("s1", "a", "local", 0, 0, 20, 10, 5.0, []),
         ]
         baseline = RunResult(
-            "r1", "baseline", "wl_test", "local-m", "cloud-m",
-            results_base, compute_summary(results_base),
+            "r1",
+            "baseline",
+            "wl_test",
+            "local-m",
+            "cloud-m",
+            results_base,
+            compute_summary(results_base),
         )
         t1 = RunResult(
-            "r2", "T1_only", "wl_test", "local-m", "cloud-m",
-            results_t1, compute_summary(results_t1),
+            "r2",
+            "T1_only",
+            "wl_test",
+            "local-m",
+            "cloud-m",
+            results_t1,
+            compute_summary(results_t1),
         )
         table = comparison_table(baseline, [t1])
 

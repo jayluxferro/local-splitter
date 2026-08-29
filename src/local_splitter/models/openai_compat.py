@@ -44,6 +44,7 @@ def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
     except Exception:
         return f"(undecodable body, {len(resp.content)} bytes)"
 
+
 DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 _FINISH_REASONS: frozenset[FinishReason] = frozenset(
@@ -87,9 +88,7 @@ class OpenAICompatClient:
         if api_key_env:
             resolved_key = os.environ.get(api_key_env)
             if not resolved_key:
-                raise ModelBackendError(
-                    f"api_key_env={api_key_env!r} is unset in the environment"
-                )
+                raise ModelBackendError(f"api_key_env={api_key_env!r} is unset in the environment")
 
         self.chat_model = chat_model
         self.embed_model = embed_model

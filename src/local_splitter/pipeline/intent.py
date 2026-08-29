@@ -33,12 +33,7 @@ INTENT_SYSTEM = (
     "Output valid JSON only, no explanation."
 )
 
-TEMPLATE = (
-    "Intent: {intent}\n"
-    "Target: {target}\n"
-    "Constraints: {constraints}\n"
-    "Query: {query}"
-)
+TEMPLATE = "Intent: {intent}\nTarget: {target}\nConstraints: {constraints}\nQuery: {query}"
 
 MIN_INTENT_LEN = 100  # chars — don't extract intent from short messages
 
@@ -87,8 +82,11 @@ async def apply(
     if last_user_idx is None:
         return IntentResult(
             messages=messages,
-            events=[StageEvent(stage="t6_intent", decision="SKIP", ms=0.0,
-                               detail={"reason": "no user message"})],
+            events=[
+                StageEvent(
+                    stage="t6_intent", decision="SKIP", ms=0.0, detail={"reason": "no user message"}
+                )
+            ],
         )
 
     p = params or {}
@@ -98,8 +96,14 @@ async def apply(
     if len(original) < min_len:
         return IntentResult(
             messages=messages,
-            events=[StageEvent(stage="t6_intent", decision="SKIP", ms=0.0,
-                               detail={"reason": "user message too short"})],
+            events=[
+                StageEvent(
+                    stage="t6_intent",
+                    decision="SKIP",
+                    ms=0.0,
+                    detail={"reason": "user message too short"},
+                )
+            ],
         )
 
     t0 = time.perf_counter()
@@ -116,8 +120,11 @@ async def apply(
         _log.warning("T6 intent extraction failed, keeping original: %s", exc)
         return IntentResult(
             messages=messages,
-            events=[StageEvent(stage="t6_intent", decision="ERROR", ms=elapsed,
-                               detail={"error": str(exc)})],
+            events=[
+                StageEvent(
+                    stage="t6_intent", decision="ERROR", ms=elapsed, detail={"error": str(exc)}
+                )
+            ],
         )
 
     elapsed = (time.perf_counter() - t0) * 1000
@@ -129,8 +136,14 @@ async def apply(
         _log.warning("T6 intent returned non-JSON, keeping original: %r", resp.content[:100])
         return IntentResult(
             messages=messages,
-            events=[StageEvent(stage="t6_intent", decision="PARSE_ERROR", ms=elapsed,
-                               detail={"raw": resp.content[:200]})],
+            events=[
+                StageEvent(
+                    stage="t6_intent",
+                    decision="PARSE_ERROR",
+                    ms=elapsed,
+                    detail={"raw": resp.content[:200]},
+                )
+            ],
         )
 
     template_text = _render_template(parsed)

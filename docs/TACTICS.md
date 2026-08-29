@@ -40,16 +40,21 @@ Request:
 
 Output (TRIVIAL or COMPLEX only):"""
 
+
 def apply(request, config):
     if not config.t1_route.enabled:
         return request
 
-    classification = local_chat(
-        model=config.models.local.chat_model,
-        prompt=TRIVIAL_PROMPT.format(request=request.user_text),
-        max_tokens=3,
-        temperature=0.0,
-    ).strip().upper()
+    classification = (
+        local_chat(
+            model=config.models.local.chat_model,
+            prompt=TRIVIAL_PROMPT.format(request=request.user_text),
+            max_tokens=3,
+            temperature=0.0,
+        )
+        .strip()
+        .upper()
+    )
 
     if classification == "TRIVIAL":
         answer = local_chat(
@@ -176,7 +181,7 @@ def apply(request, config):
     if hit:
         return Response(answer=hit.response, served_by="cache", cache_hit=True)
 
-    return request   # miss — proceed and cache on return
+    return request  # miss — proceed and cache on return
 ```
 
 ### Expected savings
@@ -264,8 +269,10 @@ model's prompt becomes "apply this change to this diff context".
 
 ```python
 def apply(request, config):
-    if not config.t5_diff.enabled: return request
-    if not is_edit_request(request): return request
+    if not config.t5_diff.enabled:
+        return request
+    if not is_edit_request(request):
+        return request
 
     hunks = local_identify_edit_hunks(request)
     minimal_context = extract_hunk_context(hunks, window=3)
@@ -314,8 +321,10 @@ INTENT_SCHEMA = {
     "constraints": "list of strings",
 }
 
+
 def apply(request, config):
-    if not config.t6_intent.enabled: return request
+    if not config.t6_intent.enabled:
+        return request
     extracted = local_chat_json(
         model=config.models.local.chat_model,
         prompt=f"Extract intent from:\n{request.user_text}",

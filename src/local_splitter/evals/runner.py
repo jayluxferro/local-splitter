@@ -57,11 +57,19 @@ TACTIC_SUBSETS: dict[str, TacticsConfig] = {
     "T1_T2_T3": TacticsConfig(t1_route=True, t2_compress=True, t3_sem_cache=True),
     "T1_T3_T4": TacticsConfig(t1_route=True, t3_sem_cache=True, t4_draft=True),
     "T1_T2_T3_T6": TacticsConfig(
-        t1_route=True, t2_compress=True, t3_sem_cache=True, t6_intent=True,
+        t1_route=True,
+        t2_compress=True,
+        t3_sem_cache=True,
+        t6_intent=True,
     ),
     "all": TacticsConfig(
-        t1_route=True, t2_compress=True, t3_sem_cache=True,
-        t4_draft=True, t5_diff=True, t6_intent=True, t7_batch=True,
+        t1_route=True,
+        t2_compress=True,
+        t3_sem_cache=True,
+        t4_draft=True,
+        t5_diff=True,
+        t6_intent=True,
+        t7_batch=True,
     ),
 }
 
@@ -69,6 +77,7 @@ TACTIC_SUBSETS: dict[str, TacticsConfig] = {
 # ---------------------------------------------------------------------------
 # Single run
 # ---------------------------------------------------------------------------
+
 
 async def run_single(
     samples: list[WorkloadSample],
@@ -123,6 +132,7 @@ async def run_single(
 # ---------------------------------------------------------------------------
 # Matrix run
 # ---------------------------------------------------------------------------
+
 
 async def run_matrix(
     samples: list[WorkloadSample],

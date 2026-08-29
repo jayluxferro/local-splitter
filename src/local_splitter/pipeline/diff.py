@@ -65,7 +65,9 @@ async def apply(
             messages=messages,
             events=[
                 StageEvent(
-                    stage="t5_diff", decision="SKIP", ms=0.0,
+                    stage="t5_diff",
+                    decision="SKIP",
+                    ms=0.0,
                     detail={"reason": "not an edit request"},
                 )
             ],
@@ -91,7 +93,9 @@ async def apply(
             messages=messages,
             events=[
                 StageEvent(
-                    stage="t5_diff", decision="ERROR", ms=elapsed,
+                    stage="t5_diff",
+                    decision="ERROR",
+                    ms=elapsed,
                     detail={"error": str(exc)},
                 )
             ],

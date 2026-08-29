@@ -37,6 +37,7 @@ def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
     except Exception:
         return f"(undecodable body, {len(resp.content)} bytes)"
 
+
 DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 _STOP_REASON_MAP: dict[str, FinishReason] = {
@@ -94,9 +95,7 @@ class AnthropicClient:
         if api_key_env:
             resolved_key = os.environ.get(api_key_env)
             if not resolved_key:
-                raise ModelBackendError(
-                    f"api_key_env={api_key_env!r} is unset in the environment"
-                )
+                raise ModelBackendError(f"api_key_env={api_key_env!r} is unset in the environment")
 
         self.chat_model = chat_model
         self.embed_model = embed_model
@@ -208,11 +207,7 @@ class AnthropicClient:
 
         # Extract text from content blocks
         content_blocks = data.get("content") or []
-        text_parts = [
-            b.get("text", "")
-            for b in content_blocks
-            if b.get("type") == "text"
-        ]
+        text_parts = [b.get("text", "") for b in content_blocks if b.get("type") == "text"]
         content = "".join(text_parts)
 
         usage_raw = data.get("usage") or {}
@@ -260,7 +255,10 @@ class AnthropicClient:
         return self._stream_messages(body, upstream_headers=upstream_headers)
 
     async def _stream_messages(
-        self, body: dict[str, Any], *, upstream_headers: Mapping[str, str] | None = None,
+        self,
+        body: dict[str, Any],
+        *,
+        upstream_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Parse Anthropic SSE into StreamChunks.
 
@@ -352,9 +350,7 @@ class AnthropicClient:
                     usage=usage,
                 )
         except httpx.HTTPError as e:
-            raise ModelBackendError(
-                f"anthropic stream request failed: {e}"
-            ) from e
+            raise ModelBackendError(f"anthropic stream request failed: {e}") from e
 
     # ------------------------------------------------------------------ embed
 

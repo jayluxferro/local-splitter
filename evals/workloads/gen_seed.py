@@ -105,7 +105,10 @@ WL1 = [
         "id": "wl1_001",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Rename the function `merge_sort` to `merge_sort_recursive` in this file:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Rename the function `merge_sort` to `merge_sort_recursive` in this file:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": True, "edit": True},
     },
@@ -113,7 +116,10 @@ WL1 = [
         "id": "wl1_002",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Add type hints to all functions in this file:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Add type hints to all functions in this file:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -121,7 +127,10 @@ WL1 = [
         "id": "wl1_003",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Refactor merge_sort and quick_sort to share a common base class SortAlgorithm with a sort() method:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Refactor merge_sort and quick_sort to share a common base class SortAlgorithm with a sort() method:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -129,7 +138,10 @@ WL1 = [
         "id": "wl1_004",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Fix the bug in the merge function — it doesn't handle empty lists correctly:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Fix the bug in the merge function — it doesn't handle empty lists correctly:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -137,7 +149,10 @@ WL1 = [
         "id": "wl1_005",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "Add a docstring to the merge function that says 'Merge two sorted lists'."},
+            {
+                "role": "user",
+                "content": "Add a docstring to the merge function that says 'Merge two sorted lists'.",
+            },
         ],
         "labels": {"trivial": True, "edit": True},
     },
@@ -145,7 +160,10 @@ WL1 = [
         "id": "wl1_006",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Convert the recursive merge_sort to an iterative bottom-up implementation:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Convert the recursive merge_sort to an iterative bottom-up implementation:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -161,7 +179,10 @@ WL1 = [
         "id": "wl1_008",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Add unit tests for merge_sort and quick_sort using pytest:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Add unit tests for merge_sort and quick_sort using pytest:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -177,7 +198,10 @@ WL1 = [
         "id": "wl1_010",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Optimize this code to use less memory by doing in-place sorting:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Optimize this code to use less memory by doing in-place sorting:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False, "edit": True},
     },
@@ -200,7 +224,10 @@ WL2 = [
         "id": "wl2_002",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "How does the merge sort algorithm work? Explain step by step with an example."},
+            {
+                "role": "user",
+                "content": "How does the merge sort algorithm work? Explain step by step with an example.",
+            },
         ],
         "labels": {"trivial": True},
     },
@@ -208,7 +235,10 @@ WL2 = [
         "id": "wl2_003",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "What are the trade-offs between merge sort and quick sort in terms of time complexity, space complexity, and stability?"},
+            {
+                "role": "user",
+                "content": "What are the trade-offs between merge sort and quick sort in terms of time complexity, space complexity, and stability?",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -216,7 +246,10 @@ WL2 = [
         "id": "wl2_004",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "Explain the difference between stable and unstable sorting algorithms."},
+            {
+                "role": "user",
+                "content": "Explain the difference between stable and unstable sorting algorithms.",
+            },
         ],
         "labels": {"trivial": True},
     },
@@ -224,7 +257,10 @@ WL2 = [
         "id": "wl2_005",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": f"Walk me through how this merge function works line by line:\n```python\n{PYTHON_FILE}\n```"},
+            {
+                "role": "user",
+                "content": f"Walk me through how this merge function works line by line:\n```python\n{PYTHON_FILE}\n```",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -232,7 +268,10 @@ WL2 = [
         "id": "wl2_006",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "Why does Python's built-in sort use Timsort instead of merge sort or quick sort?"},
+            {
+                "role": "user",
+                "content": "Why does Python's built-in sort use Timsort instead of merge sort or quick sort?",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -248,7 +287,10 @@ WL2 = [
         "id": "wl2_008",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "Can you explain recursion to me using merge sort as an example? I'm new to programming."},
+            {
+                "role": "user",
+                "content": "Can you explain recursion to me using merge sort as an example? I'm new to programming.",
+            },
         ],
         "labels": {"trivial": True},
     },
@@ -256,7 +298,10 @@ WL2 = [
         "id": "wl2_009",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "What would happen if the pivot selection in quick sort always chose the smallest element?"},
+            {
+                "role": "user",
+                "content": "What would happen if the pivot selection in quick sort always chose the smallest element?",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -264,7 +309,10 @@ WL2 = [
         "id": "wl2_010",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM},
-            {"role": "user", "content": "Compare the practical performance of merge sort vs quick sort for sorting 1 million random integers in Python."},
+            {
+                "role": "user",
+                "content": "Compare the practical performance of merge sort vs quick sort for sorting 1 million random integers in Python.",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -275,16 +323,88 @@ WL2 = [
 # ---------------------------------------------------------------------------
 
 WL3 = [
-    {"id": "wl3_001", "messages": [{"role": "user", "content": "What is Python?"}], "labels": {"trivial": True}},
-    {"id": "wl3_002", "messages": [{"role": "user", "content": "How do I install pip?"}], "labels": {"trivial": True}},
-    {"id": "wl3_003", "messages": [{"role": "user", "content": "Explain the differences between REST and GraphQL APIs, with pros and cons for each approach."}], "labels": {"trivial": False}},
-    {"id": "wl3_004", "messages": [{"role": "user", "content": "What's a good name for a variable that holds a list of users?"}], "labels": {"trivial": True}},
-    {"id": "wl3_005", "messages": [{"role": "user", "content": "Design a database schema for a social media app that supports posts, comments, likes, follows, and direct messages. Include proper indexing strategy."}], "labels": {"trivial": False}},
-    {"id": "wl3_006", "messages": [{"role": "user", "content": "What does 'git rebase' do?"}], "labels": {"trivial": True}},
-    {"id": "wl3_007", "messages": [{"role": "user", "content": "Write a Python function that checks if a string is a palindrome."}], "labels": {"trivial": True}},
-    {"id": "wl3_008", "messages": [{"role": "user", "content": "Explain how garbage collection works in Python, including reference counting and the generational collector."}], "labels": {"trivial": False}},
-    {"id": "wl3_009", "messages": [{"role": "user", "content": "What's the difference between == and is in Python?"}], "labels": {"trivial": True}},
-    {"id": "wl3_010", "messages": [{"role": "user", "content": "Help me architect a microservices system for an e-commerce platform. Consider service boundaries, data ownership, inter-service communication, eventual consistency, and failure handling."}], "labels": {"trivial": False}},
+    {
+        "id": "wl3_001",
+        "messages": [{"role": "user", "content": "What is Python?"}],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_002",
+        "messages": [{"role": "user", "content": "How do I install pip?"}],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_003",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Explain the differences between REST and GraphQL APIs, with pros and cons for each approach.",
+            }
+        ],
+        "labels": {"trivial": False},
+    },
+    {
+        "id": "wl3_004",
+        "messages": [
+            {
+                "role": "user",
+                "content": "What's a good name for a variable that holds a list of users?",
+            }
+        ],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_005",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Design a database schema for a social media app that supports posts, comments, likes, follows, and direct messages. Include proper indexing strategy.",
+            }
+        ],
+        "labels": {"trivial": False},
+    },
+    {
+        "id": "wl3_006",
+        "messages": [{"role": "user", "content": "What does 'git rebase' do?"}],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_007",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Write a Python function that checks if a string is a palindrome.",
+            }
+        ],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_008",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Explain how garbage collection works in Python, including reference counting and the generational collector.",
+            }
+        ],
+        "labels": {"trivial": False},
+    },
+    {
+        "id": "wl3_009",
+        "messages": [
+            {"role": "user", "content": "What's the difference between == and is in Python?"}
+        ],
+        "labels": {"trivial": True},
+    },
+    {
+        "id": "wl3_010",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Help me architect a microservices system for an e-commerce platform. Consider service boundaries, data ownership, inter-service communication, eventual consistency, and failure handling.",
+            }
+        ],
+        "labels": {"trivial": False},
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -304,7 +424,10 @@ WL4 = [
         "id": "wl4_002",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM + "\n\n" + RAG_CONTEXT},
-            {"role": "user", "content": "Is there a security vulnerability in the token verification?"},
+            {
+                "role": "user",
+                "content": "Is there a security vulnerability in the token verification?",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -320,7 +443,10 @@ WL4 = [
         "id": "wl4_004",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM + "\n\n" + RAG_CONTEXT},
-            {"role": "user", "content": "Suggest improvements to the auth middleware to support API keys and OAuth2 in addition to JWT."},
+            {
+                "role": "user",
+                "content": "Suggest improvements to the auth middleware to support API keys and OAuth2 in addition to JWT.",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -336,7 +462,10 @@ WL4 = [
         "id": "wl4_006",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM + "\n\n" + RAG_CONTEXT},
-            {"role": "user", "content": "Design a rate limiting strategy for the auth endpoints that prevents brute force attacks while allowing legitimate traffic."},
+            {
+                "role": "user",
+                "content": "Design a rate limiting strategy for the auth endpoints that prevents brute force attacks while allowing legitimate traffic.",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -352,7 +481,10 @@ WL4 = [
         "id": "wl4_008",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM + "\n\n" + RAG_CONTEXT},
-            {"role": "user", "content": "Audit this auth code for OWASP top 10 vulnerabilities and suggest fixes for each issue found."},
+            {
+                "role": "user",
+                "content": "Audit this auth code for OWASP top 10 vulnerabilities and suggest fixes for each issue found.",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -368,7 +500,10 @@ WL4 = [
         "id": "wl4_010",
         "messages": [
             {"role": "system", "content": BOILERPLATE_SYSTEM + "\n\n" + RAG_CONTEXT},
-            {"role": "user", "content": "Implement a refresh token mechanism that uses rotating refresh tokens with token family tracking to detect token theft."},
+            {
+                "role": "user",
+                "content": "Implement a refresh token mechanism that uses rotating refresh tokens with token family tracking to detect token theft.",
+            },
         ],
         "labels": {"trivial": False},
     },
@@ -377,6 +512,7 @@ WL4 = [
 # ---------------------------------------------------------------------------
 # Write JSONL files
 # ---------------------------------------------------------------------------
+
 
 def write_jsonl(path: Path, samples: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

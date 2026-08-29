@@ -41,11 +41,11 @@ def _config(*, t3: bool = True, t1: bool = False, **t3_params) -> Config:
     t3_defaults = {"similarity_threshold": 0.5}
     t3_defaults.update(t3_params)
     return Config(
-        cloud=ModelConfig(
-            backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"
-        ),
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
         local=ModelConfig(
-            backend="ollama", endpoint="http://local", chat_model="local-m",
+            backend="ollama",
+            endpoint="http://local",
+            chat_model="local-m",
             embed_model="nomic-embed-text",
         ),
         tactics=TacticsConfig(
@@ -62,6 +62,7 @@ _MSGS = [{"role": "user", "content": "what is a monad?"}]
 # ---------------------------------------------------------------------------
 # CacheStore unit tests
 # ---------------------------------------------------------------------------
+
 
 def _vec(first: float = 1.0, second: float = 0.0) -> list[float]:
     """Build a EMBED_DIM-sized vector with the first two dims set."""
@@ -134,6 +135,7 @@ class TestCacheStore:
 # Async: lookup()
 # ---------------------------------------------------------------------------
 
+
 async def test_lookup_miss_on_empty_cache(tmp_path: Path) -> None:
     local = FakeChatClient(chat_model="local-m")
     store = _store(tmp_path)
@@ -167,6 +169,7 @@ async def test_lookup_embed_error_fails_open(tmp_path: Path) -> None:
         chat_model="local-m",
         raise_on_complete=ModelBackendError("embed down"),
     )
+
     # Override embed to raise.
     async def bad_embed(*a, **kw):
         raise ModelBackendError("embed down")
@@ -197,6 +200,7 @@ async def test_lookup_no_user_text_skips() -> None:
 # Sync: store_response()
 # ---------------------------------------------------------------------------
 
+
 def test_store_response_succeeds(tmp_path: Path) -> None:
     store = _store(tmp_path)
     event = store_response(
@@ -216,10 +220,12 @@ def test_store_response_succeeds(tmp_path: Path) -> None:
 # Integration: Pipeline.complete with T3 enabled
 # ---------------------------------------------------------------------------
 
+
 async def test_pipeline_t3_miss_then_hit(tmp_path: Path) -> None:
     """First call is a miss (goes to cloud, stores). Second call is a hit."""
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="cloud answer",
+        chat_model="cloud-m",
+        reply_content="cloud answer",
         usage=Usage(input_tokens=50, output_tokens=10),
     )
     local = FakeChatClient(
@@ -228,7 +234,10 @@ async def test_pipeline_t3_miss_then_hit(tmp_path: Path) -> None:
     )
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(), cache_store=store,
+        cloud=cloud,
+        local=local,
+        config=_config(),
+        cache_store=store,
     )
 
     # First request: cache miss → cloud.
@@ -258,7 +267,10 @@ async def test_pipeline_t3_disabled_skips_cache(tmp_path: Path) -> None:
     local = FakeChatClient(chat_model="local-m")
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(t3=False), cache_store=store,
+        cloud=cloud,
+        local=local,
+        config=_config(t3=False),
+        cache_store=store,
     )
 
     resp = await pipeline.complete(PipelineRequest(messages=_MSGS))
@@ -272,7 +284,10 @@ async def test_pipeline_t3_no_cache_store_skips(tmp_path: Path) -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(chat_model="local-m")
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(), cache_store=None,
+        cloud=cloud,
+        local=local,
+        config=_config(),
+        cache_store=None,
     )
 
     resp = await pipeline.complete(PipelineRequest(messages=_MSGS))
@@ -284,12 +299,13 @@ async def test_pipeline_t3_explicit_hint_bypasses_cache(tmp_path: Path) -> None:
     local = FakeChatClient(chat_model="local-m")
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(), cache_store=store,
+        cloud=cloud,
+        local=local,
+        config=_config(),
+        cache_store=store,
     )
 
-    resp = await pipeline.complete(
-        PipelineRequest(messages=_MSGS, model_hint="cloud")
-    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS, model_hint="cloud"))
     assert resp.served_by == "cloud"
     assert not any(e.stage.startswith("t3_") for e in resp.trace)
     store.close()
@@ -297,12 +313,16 @@ async def test_pipeline_t3_explicit_hint_bypasses_cache(tmp_path: Path) -> None:
 
 async def test_pipeline_t3_stats_count_cache_hits(tmp_path: Path) -> None:
     cloud = FakeChatClient(
-        chat_model="cloud-m", usage=Usage(input_tokens=20, output_tokens=5),
+        chat_model="cloud-m",
+        usage=Usage(input_tokens=20, output_tokens=5),
     )
     local = FakeChatClient(chat_model="local-m")
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(), cache_store=store,
+        cloud=cloud,
+        local=local,
+        config=_config(),
+        cache_store=store,
     )
 
     await pipeline.complete(PipelineRequest(messages=_MSGS))  # miss
@@ -321,6 +341,7 @@ async def test_pipeline_t3_stats_count_cache_hits(tmp_path: Path) -> None:
 # Integration: T1 + T3 composition
 # ---------------------------------------------------------------------------
 
+
 async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
     """T1 routes trivial locally — T3 cache is never consulted."""
     cloud = FakeChatClient(chat_model="cloud-m")
@@ -331,7 +352,9 @@ async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
     )
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(t3=True, t1=True),
+        cloud=cloud,
+        local=local,
+        config=_config(t3=True, t1=True),
         cache_store=store,
     )
 
@@ -346,16 +369,20 @@ async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
 async def test_t1_complex_then_t3_miss(tmp_path: Path) -> None:
     """T1 classifies COMPLEX → T3 cache lookup (miss) → cloud."""
     cloud = FakeChatClient(
-        chat_model="cloud-m", reply_content="cloud answer",
+        chat_model="cloud-m",
+        reply_content="cloud answer",
         usage=Usage(input_tokens=50, output_tokens=10),
     )
     local = FakeChatClient(
-        chat_model="local-m", reply_content="COMPLEX",
+        chat_model="local-m",
+        reply_content="COMPLEX",
         usage=Usage(input_tokens=5, output_tokens=1),
     )
     store = _store(tmp_path)
     pipeline = Pipeline(
-        cloud=cloud, local=local, config=_config(t3=True, t1=True),
+        cloud=cloud,
+        local=local,
+        config=_config(t3=True, t1=True),
         cache_store=store,
     )
 

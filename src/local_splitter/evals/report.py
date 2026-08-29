@@ -87,6 +87,7 @@ def _run_to_row(r: RunResult) -> dict[str, object]:
 # Markdown comparison table
 # ---------------------------------------------------------------------------
 
+
 def comparison_table(
     baseline: RunResult,
     treatments: list[RunResult],
@@ -109,9 +110,7 @@ def comparison_table(
     )
 
     # Baseline row.
-    lines.append(
-        f"| baseline | {base_cloud:,} | — | 0 | 0% | {base_cost:.6f} | — |"
-    )
+    lines.append(f"| baseline | {base_cloud:,} | — | 0 | 0% | {base_cost:.6f} | — |")
 
     for t in treatments:
         s = t.summary
@@ -120,11 +119,7 @@ def comparison_table(
         savings = token_savings_pct(b, s)
         tcost = cost_estimate(s)
         cost_saved = ((base_cost - tcost) / base_cost * 100) if base_cost > 0 else 0.0
-        local_pct = (
-            s.served_by.get("local", 0) / s.n_samples * 100
-            if s.n_samples > 0
-            else 0.0
-        )
+        local_pct = s.served_by.get("local", 0) / s.n_samples * 100 if s.n_samples > 0 else 0.0
         lines.append(
             f"| {t.subset_name} | {cloud_total:,} | {savings:.1f}% "
             f"| {local_total:,} | {local_pct:.0f}% "

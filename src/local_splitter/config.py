@@ -21,15 +21,17 @@ from typing import Any, Literal
 import yaml
 
 # Per-request ``PipelineRequest.tactics_override`` uses these names to *disable* tactics.
-TACTIC_DISABLE_NAMES = frozenset({
-    "t1_route",
-    "t2_compress",
-    "t3_sem_cache",
-    "t4_draft",
-    "t5_diff",
-    "t6_intent",
-    "t7_batch",
-})
+TACTIC_DISABLE_NAMES = frozenset(
+    {
+        "t1_route",
+        "t2_compress",
+        "t3_sem_cache",
+        "t4_draft",
+        "t5_diff",
+        "t6_intent",
+        "t7_batch",
+    }
+)
 
 Backend = Literal["ollama", "openai_compat", "anthropic"]
 
@@ -292,9 +294,7 @@ def load_config(path: Path | str | None = None) -> Config:
         if candidate.is_file():
             return Config.from_yaml(candidate)
 
-    raise ConfigError(
-        "no config file found; tried: " + ", ".join(str(c) for c in candidates)
-    )
+    raise ConfigError("no config file found; tried: " + ", ".join(str(c) for c in candidates))
 
 
 __all__ = [

@@ -408,10 +408,7 @@ def test_transparent_proxy_midstream_empty_readerror_typed_in_frame_and_log(
     assert payload["type"] == "error"
     assert payload["error"]["type"] == "api_error"
     assert payload["error"]["message"].startswith("ReadError")
-    assert any(
-        "ReadError" in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any("ReadError" in rec.getMessage() for rec in caplog.records)
 
 
 def test_openai_transparent_proxy_midstream_empty_readerror_typed_in_frame_and_log(
@@ -444,14 +441,12 @@ def test_openai_transparent_proxy_midstream_empty_readerror_typed_in_frame_and_l
     payload = json.loads(error_frames[0])
     assert payload["error"]["type"] == "api_error"
     assert payload["error"]["message"].startswith("ReadError")
-    assert any(
-        "ReadError" in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any("ReadError" in rec.getMessage() for rec in caplog.records)
 
 
 def test_anthropic_sse_generator_empty_backend_error_typed_in_frame_and_log(
-    monkeypatch, caplog,
+    monkeypatch,
+    caplog,
 ):
     """Regression: pipeline-side Anthropic SSE handler must name the exception
     type even when the backend error carries an empty message string."""
@@ -492,10 +487,7 @@ def test_anthropic_sse_generator_empty_backend_error_typed_in_frame_and_log(
     error_events = [e for e in events if e.startswith("event: error")]
     assert len(error_events) == 1
     data_line = error_events[0].splitlines()[1]
-    payload = json.loads(data_line[len("data: "):])
+    payload = json.loads(data_line[len("data: ") :])
     assert payload["type"] == "error"
     assert payload["error"]["message"].startswith("ModelBackendError")
-    assert any(
-        "ModelBackendError" in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any("ModelBackendError" in rec.getMessage() for rec in caplog.records)

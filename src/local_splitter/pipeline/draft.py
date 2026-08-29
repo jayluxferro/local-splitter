@@ -49,9 +49,7 @@ class DraftResult:
     events: list[StageEvent]
 
 
-def _build_review_messages(
-    original_messages: list[Message], draft: str
-) -> list[Message]:
+def _build_review_messages(original_messages: list[Message], draft: str) -> list[Message]:
     """Build the messages for the cloud review call.
 
     The cloud sees: the review system prompt, then the original
@@ -59,9 +57,7 @@ def _build_review_messages(
     """
     msgs: list[Message] = [{"role": "system", "content": REVIEW_SYSTEM}]
     msgs.extend(original_messages)
-    msgs.append(
-        {"role": "assistant", "content": f"[DRAFT]\n{draft}"}
-    )
+    msgs.append({"role": "assistant", "content": f"[DRAFT]\n{draft}"})
     msgs.append(
         {
             "role": "user",
