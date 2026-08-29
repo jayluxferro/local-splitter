@@ -32,6 +32,7 @@ from .base import (
     ModelBackendError,
     StreamChunk,
     Usage,
+    transport_detail,
 )
 
 _log = logging.getLogger(__name__)
@@ -175,7 +176,7 @@ class OpenAICompatClient:
         try:
             resp = await self._http.post("/chat/completions", json=body)
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"openai-compat chat request failed: {e}") from e
+            raise ModelBackendError(f"openai-compat chat request failed: {transport_detail(e)}") from e
 
         if resp.status_code != 200:
             retry_after = None
@@ -318,7 +319,7 @@ class OpenAICompatClient:
                     usage=usage,
                 )
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"openai-compat stream request failed: {e}") from e
+            raise ModelBackendError(f"openai-compat stream request failed: {transport_detail(e)}") from e
 
     # ------------------------------------------------------------------ embed
 
@@ -338,7 +339,7 @@ class OpenAICompatClient:
         try:
             resp = await self._http.post("/embeddings", json=body)
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"openai-compat embed request failed: {e}") from e
+            raise ModelBackendError(f"openai-compat embed request failed: {transport_detail(e)}") from e
 
         if resp.status_code != 200:
             retry_after = None

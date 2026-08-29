@@ -99,6 +99,16 @@ class ModelBackendError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
 
 
+def transport_detail(exc: BaseException) -> str:
+    """Exception type name + message, with a dangling colon stripped.
+
+    httpx timeouts and ReadError wrapping anyio.EndOfStream have an EMPTY
+    str() — embedding ``{exc}`` verbatim produces a blank message.  Prefix
+    the type so backend failures stay diagnosable.
+    """
+    return f"{type(exc).__name__}: {exc}".rstrip(": ")
+
+
 @runtime_checkable
 class ChatClient(Protocol):
     """Minimum interface every model backend must satisfy.

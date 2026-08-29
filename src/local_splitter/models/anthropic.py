@@ -25,6 +25,7 @@ from .base import (
     ModelBackendError,
     StreamChunk,
     Usage,
+    transport_detail,
 )
 
 _log = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ class AnthropicClient:
         try:
             resp = await self._http.post("/v1/messages", json=body, headers=req_headers)
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"anthropic chat request failed: {e}") from e
+            raise ModelBackendError(f"anthropic chat request failed: {transport_detail(e)}") from e
 
         if resp.status_code != 200:
             retry_after = None
@@ -350,7 +351,7 @@ class AnthropicClient:
                     usage=usage,
                 )
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"anthropic stream request failed: {e}") from e
+            raise ModelBackendError(f"anthropic stream request failed: {transport_detail(e)}") from e
 
     # ------------------------------------------------------------------ embed
 

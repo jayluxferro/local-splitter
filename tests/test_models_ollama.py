@@ -211,3 +211,28 @@ async def test_embed_empty_input_returns_empty_without_call() -> None:
     async with OllamaClient(chat_model="m", embed_model="e", transport=transport) as c:
         assert await c.embed([]) == []
     assert calls == []
+
+
+def test_transport_detail_types_empty_str_exceptions() -> None:
+    """httpx timeouts and abrupt closes have an EMPTY str() — the helper must
+    still name the type, and must not leave a dangling colon."""
+    from local_splitter.models.base import transport_detail
+
+    assert transport_detail(httpx.ConnectTimeout("")) == "ConnectTimeout"
+    assert transport_detail(httpx.ReadError("")) == "ReadError"
+    assert transport_detail(httpx.ConnectError("connection refused")) == (
+        "ConnectError: connection refused"
+    )
+
+
+async def test_complete_empty_str_transport_error_names_exception_type() -> None:
+    """Regression: str(httpx.ConnectError('')) is EMPTY — the ModelBackendError
+    message must still name the exception type, not end after 'failed: '."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("")
+
+    transport = httpx.MockTransport(handler)
+    async with OllamaClient(chat_model="m", transport=transport) as c:
+        with pytest.raises(ModelBackendError, match="ollama chat request failed: ConnectError"):
+            await c.complete([{"role": "user", "content": "x"}])

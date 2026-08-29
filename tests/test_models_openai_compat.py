@@ -242,3 +242,26 @@ async def test_embed_empty_input_returns_empty_without_call() -> None:
     ) as c:
         assert await c.embed([]) == []
     assert calls == []
+
+
+async def test_complete_empty_str_transport_error_names_exception_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: str(httpx.ReadTimeout('')) is EMPTY — the ModelBackendError
+    message must still name the exception type, not end after 'failed: '."""
+    monkeypatch.setenv("TEST_API_KEY", "sk-xyz")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("")
+
+    transport = httpx.MockTransport(handler)
+    async with OpenAICompatClient(
+        chat_model="gpt-4o-mini",
+        endpoint=BASE,
+        api_key_env="TEST_API_KEY",
+        transport=transport,
+    ) as c:
+        with pytest.raises(
+            ModelBackendError, match="openai-compat chat request failed: ReadTimeout"
+        ):
+            await c.complete([{"role": "user", "content": "x"}])

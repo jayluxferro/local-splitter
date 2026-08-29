@@ -32,6 +32,7 @@ from .base import (
     ModelBackendError,
     StreamChunk,
     Usage,
+    transport_detail,
 )
 
 _log = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ class OllamaClient:
         try:
             resp = await self._http.post("/api/chat", json=body)
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"ollama chat request failed: {e}") from e
+            raise ModelBackendError(f"ollama chat request failed: {transport_detail(e)}") from e
 
         if resp.status_code != 200:
             retry_after = None
@@ -272,7 +273,7 @@ class OllamaClient:
                     )
                     return
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"ollama stream request failed: {e}") from e
+            raise ModelBackendError(f"ollama stream request failed: {transport_detail(e)}") from e
 
     # ------------------------------------------------------------------ embed
 
@@ -292,7 +293,7 @@ class OllamaClient:
         try:
             resp = await self._http.post("/api/embed", json=body)
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"ollama embed request failed: {e}") from e
+            raise ModelBackendError(f"ollama embed request failed: {transport_detail(e)}") from e
 
         if resp.status_code != 200:
             retry_after = None
