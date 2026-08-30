@@ -9,6 +9,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: local_splitter
+          POSTGRES_PASSWORD: local_splitter
+          POSTGRES_DB: local_splitter_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U local_splitter"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      LOCAL_SPLITTER_TEST_DB_URL: postgresql://local_splitter:local_splitter@localhost:5432/local_splitter_test
     steps:
       - uses: actions/checkout@v4
 

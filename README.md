@@ -62,7 +62,7 @@ zero-cost pass-throughs.
 |---|------|------|-------------|
 | **T1** | `route` | short-circuit | Local model classifies requests as TRIVIAL/COMPLEX. Trivials answered locally — never hit the cloud. |
 | **T2** | `compress` | transform | Local model shortens long prompts (system prompts, history, RAG chunks) before they reach the cloud. |
-| **T3** | `sem-cache` | short-circuit | Semantic similarity cache (SQLite + sqlite-vec). Near-duplicate queries return cached responses. |
+| **T3** | `sem-cache` | short-circuit | Semantic similarity cache (Postgres + pgvector). Near-duplicate queries return cached responses. |
 | **T4** | `draft` | replace | Local model drafts the answer; cloud model reviews/patches it instead of generating from scratch. |
 | **T5** | `diff` | transform | For code-edit requests, extracts minimal diff context so the cloud only sees the surgical change. |
 | **T6** | `intent` | transform | Parses verbose free-text prompts into structured intent fields — cloud gets a tight template. |
@@ -434,7 +434,7 @@ src/local_splitter/
 │   ├── types.py            #   PipelineRequest/Response, StageEvent, StatsSnapshot
 │   ├── route.py            #   T1 — local classifier
 │   ├── compress.py         #   T2 — prompt compression
-│   ├── sem_cache.py        #   T3 — semantic cache (sqlite-vec)
+│   ├── sem_cache.py        #   T3 — semantic cache (pgvector)
 │   ├── draft.py            #   T4 — draft + review
 │   ├── diff.py             #   T5 — minimal diff extraction
 │   ├── intent.py           #   T6 — intent extraction

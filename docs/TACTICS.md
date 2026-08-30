@@ -168,7 +168,7 @@ misses.
 
 ### How to implement
 
-Stack: `sqlite` + `sqlite-vec` extension for the vector store,
+Stack: `postgres` + `pgvector` (cosine `<=>` KNN) for the vector store,
 `nomic-embed-text` via Ollama for embeddings. About 300 lines of Python.
 
 ```python

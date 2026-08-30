@@ -12,13 +12,12 @@ Tests cover:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from local_splitter.config import Config, ModelConfig, TacticsConfig
 from local_splitter.models import ModelBackendError, Usage
 from local_splitter.pipeline import Pipeline, PipelineRequest
 from local_splitter.pipeline.compress import apply
 
+from conftest import drop_cache_tables, TEST_DB_URL
 from _fakes import FakeChatClient
 
 
@@ -322,12 +321,13 @@ async def test_t1_complex_then_t2_compresses() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_t3_hit_bypasses_t2(tmp_path: Path) -> None:
+async def test_t3_hit_bypasses_t2() -> None:
     from local_splitter.pipeline.sem_cache import CacheStore
 
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(chat_model="local-m")
-    store = CacheStore(tmp_path / "cache.sqlite", embed_dim=32)
+    drop_cache_tables()
+    store = CacheStore(TEST_DB_URL, embed_dim=32)
 
     cfg = Config(
         cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),

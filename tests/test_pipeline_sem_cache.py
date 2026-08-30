@@ -10,8 +10,6 @@ Tests cover:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from local_splitter.config import Config, ModelConfig, TacticsConfig
 from local_splitter.models import ModelBackendError, Usage
 from local_splitter.pipeline import Pipeline, PipelineRequest
@@ -21,6 +19,7 @@ from local_splitter.pipeline.sem_cache import (
     store_response,
 )
 
+from conftest import drop_cache_tables, TEST_DB_URL
 from _fakes import FakeChatClient
 
 
@@ -31,8 +30,11 @@ from _fakes import FakeChatClient
 EMBED_DIM = 32  # must match FakeChatClient default embed_dim
 
 
-def _store(tmp_path: Path) -> CacheStore:
-    return CacheStore(tmp_path / "cache.sqlite", embed_dim=EMBED_DIM)
+def _store() -> CacheStore:
+    # Drop before construct: per-test isolation without an autouse
+    # fixture, so the non-DB tests keep running without Postgres.
+    drop_cache_tables()
+    return CacheStore(TEST_DB_URL, embed_dim=EMBED_DIM)
 
 
 def _config(*, t3: bool = True, t1: bool = False, **t3_params) -> Config:
@@ -74,8 +76,8 @@ def _vec(first: float = 1.0, second: float = 0.0) -> list[float]:
 
 
 class TestCacheStore:
-    def test_store_and_lookup_hit(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_store_and_lookup_hit(self) -> None:
+        store = _store()
         vec = _vec(1.0)
         store.store(vec, response="it's a burrito", model="cloud-m", finish_reason="stop")
 
@@ -86,8 +88,8 @@ class TestCacheStore:
         assert entry.model == "cloud-m"
         store.close()
 
-    def test_lookup_miss_below_threshold(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_lookup_miss_below_threshold(self) -> None:
+        store = _store()
         store.store(_vec(1.0, 0.0), response="a", model="m", finish_reason="stop")
 
         # Orthogonal vector → cosine similarity ≈ 0
@@ -95,14 +97,14 @@ class TestCacheStore:
         assert entry is None
         store.close()
 
-    def test_lookup_miss_empty_cache(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_lookup_miss_empty_cache(self) -> None:
+        store = _store()
         entry = store.lookup(_vec(1.0))
         assert entry is None
         store.close()
 
-    def test_ttl_expiry(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_ttl_expiry(self) -> None:
+        store = _store()
         vec = _vec(1.0)
         store.store(vec, response="old", model="m", finish_reason="stop")
 
@@ -112,8 +114,8 @@ class TestCacheStore:
         assert store.lookup(vec, ttl=0) is None
         store.close()
 
-    def test_evict_expired(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_evict_expired(self) -> None:
+        store = _store()
         store.store(_vec(1.0), response="a", model="m", finish_reason="stop")
         assert store.size == 1
         # Evict with ttl=0 → everything is "expired".
@@ -122,8 +124,8 @@ class TestCacheStore:
         assert store.size == 0
         store.close()
 
-    def test_size(self, tmp_path: Path) -> None:
-        store = _store(tmp_path)
+    def test_size(self) -> None:
+        store = _store()
         assert store.size == 0
         store.store(_vec(1.0, 0.0), response="a", model="m", finish_reason="stop")
         store.store(_vec(0.0, 1.0), response="b", model="m", finish_reason="stop")
@@ -136,9 +138,9 @@ class TestCacheStore:
 # ---------------------------------------------------------------------------
 
 
-async def test_lookup_miss_on_empty_cache(tmp_path: Path) -> None:
+async def test_lookup_miss_on_empty_cache() -> None:
     local = FakeChatClient(chat_model="local-m")
-    store = _store(tmp_path)
+    store = _store()
     result = await lookup(_MSGS, local=local, store=store)
     assert result.hit is False
     assert result.embedding is not None
@@ -146,9 +148,9 @@ async def test_lookup_miss_on_empty_cache(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_lookup_hit_after_store(tmp_path: Path) -> None:
+async def test_lookup_hit_after_store() -> None:
     local = FakeChatClient(chat_model="local-m")
-    store = _store(tmp_path)
+    store = _store()
 
     # Embed the same text that lookup() will embed, then store it.
     emb = (await local.embed(["what is a monad?"]))[0]
@@ -164,7 +166,7 @@ async def test_lookup_hit_after_store(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_lookup_embed_error_fails_open(tmp_path: Path) -> None:
+async def test_lookup_embed_error_fails_open() -> None:
     local = FakeChatClient(
         chat_model="local-m",
         raise_on_complete=ModelBackendError("embed down"),
@@ -175,7 +177,7 @@ async def test_lookup_embed_error_fails_open(tmp_path: Path) -> None:
         raise ModelBackendError("embed down")
 
     local.embed = bad_embed  # type: ignore[assignment]
-    store = _store(tmp_path)
+    store = _store()
 
     result = await lookup(_MSGS, local=local, store=store)
     assert result.hit is False
@@ -201,8 +203,8 @@ async def test_lookup_no_user_text_skips() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_store_response_succeeds(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_store_response_succeeds() -> None:
+    store = _store()
     event = store_response(
         _vec(1.0),
         response="answer",
@@ -221,7 +223,7 @@ def test_store_response_succeeds(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_pipeline_t3_miss_then_hit(tmp_path: Path) -> None:
+async def test_pipeline_t3_miss_then_hit() -> None:
     """First call is a miss (goes to cloud, stores). Second call is a hit."""
     cloud = FakeChatClient(
         chat_model="cloud-m",
@@ -232,7 +234,7 @@ async def test_pipeline_t3_miss_then_hit(tmp_path: Path) -> None:
         chat_model="local-m",
         usage=Usage(input_tokens=5, output_tokens=1),
     )
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,
@@ -262,10 +264,10 @@ async def test_pipeline_t3_miss_then_hit(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_pipeline_t3_disabled_skips_cache(tmp_path: Path) -> None:
+async def test_pipeline_t3_disabled_skips_cache() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(chat_model="local-m")
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,
@@ -280,7 +282,7 @@ async def test_pipeline_t3_disabled_skips_cache(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_pipeline_t3_no_cache_store_skips(tmp_path: Path) -> None:
+async def test_pipeline_t3_no_cache_store_skips() -> None:
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(chat_model="local-m")
     pipeline = Pipeline(
@@ -294,10 +296,10 @@ async def test_pipeline_t3_no_cache_store_skips(tmp_path: Path) -> None:
     assert resp.served_by == "cloud"
 
 
-async def test_pipeline_t3_explicit_hint_bypasses_cache(tmp_path: Path) -> None:
+async def test_pipeline_t3_explicit_hint_bypasses_cache() -> None:
     cloud = FakeChatClient(chat_model="cloud-m", reply_content="direct")
     local = FakeChatClient(chat_model="local-m")
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,
@@ -311,13 +313,13 @@ async def test_pipeline_t3_explicit_hint_bypasses_cache(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_pipeline_t3_stats_count_cache_hits(tmp_path: Path) -> None:
+async def test_pipeline_t3_stats_count_cache_hits() -> None:
     cloud = FakeChatClient(
         chat_model="cloud-m",
         usage=Usage(input_tokens=20, output_tokens=5),
     )
     local = FakeChatClient(chat_model="local-m")
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,
@@ -342,7 +344,7 @@ async def test_pipeline_t3_stats_count_cache_hits(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
+async def test_t1_trivial_bypasses_t3() -> None:
     """T1 routes trivial locally — T3 cache is never consulted."""
     cloud = FakeChatClient(chat_model="cloud-m")
     local = FakeChatClient(
@@ -350,7 +352,7 @@ async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
         reply_sequence=["TRIVIAL", "local answer"],
         usage=Usage(input_tokens=5, output_tokens=2),
     )
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,
@@ -366,7 +368,7 @@ async def test_t1_trivial_bypasses_t3(tmp_path: Path) -> None:
     store.close()
 
 
-async def test_t1_complex_then_t3_miss(tmp_path: Path) -> None:
+async def test_t1_complex_then_t3_miss() -> None:
     """T1 classifies COMPLEX → T3 cache lookup (miss) → cloud."""
     cloud = FakeChatClient(
         chat_model="cloud-m",
@@ -378,7 +380,7 @@ async def test_t1_complex_then_t3_miss(tmp_path: Path) -> None:
         reply_content="COMPLEX",
         usage=Usage(input_tokens=5, output_tokens=1),
     )
-    store = _store(tmp_path)
+    store = _store()
     pipeline = Pipeline(
         cloud=cloud,
         local=local,

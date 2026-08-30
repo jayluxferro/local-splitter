@@ -101,7 +101,7 @@ want).
 One file per tactic:
 
 - `route.py` — T1 classify TRIVIAL / COMPLEX
-- `sem_cache.py` — T3 local embedding + sqlite-vec store
+- `sem_cache.py` — T3 local embedding + Postgres pgvector store
 - `compress.py` — T2 summarise long context
 - `intent.py` — T6 structured intent extraction
 - `draft.py` — T4 draft-then-review
@@ -177,7 +177,7 @@ evaluation:
 ```
 .local_splitter/
 ├── runs.jsonl              # every pipeline event for eval replay
-├── cache.sqlite            # T3 semantic cache (sqlite + sqlite-vec)
+├── cache (Postgres)        # T3 semantic cache — local_splitter DB (LOCAL_SPLITTER_DB_URL)
 ├── metrics.jsonl           # per-call tokens/latency/cost
 └── config.yaml             # optional per-workspace override
 ```

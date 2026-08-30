@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +31,21 @@ app = typer.Typer(
     help="MCP shim that splits LLM requests between a local and cloud model.",
     no_args_is_help=False,
 )
+
+_DEFAULT_DB_URL = "postgresql://local_splitter@localhost:5432/local_splitter"
+
+
+def _env(name: str, default: str | None = None) -> str | None:
+    return os.environ.get(name, default)
+
+
+def _cache_db_default() -> str:
+    """Default Postgres DSN for --cache-db-url options.
+
+    ``LOCAL_SPLITTER_DB_URL`` overrides the default; the ``or`` guards
+    against an empty-string env value (same pattern as lattice's cli).
+    """
+    return _env("LOCAL_SPLITTER_DB_URL", _DEFAULT_DB_URL) or _DEFAULT_DB_URL
 
 
 def _version_callback(value: bool) -> None:
@@ -63,7 +79,7 @@ def _load(config_path: Path | None) -> Config:
         raise typer.Exit(code=2) from e
 
 
-def _build_pipeline(config: Config) -> Pipeline:
+def _build_pipeline(config: Config, cache_db_url: str) -> Pipeline:
     cloud = build_chat_client(config.cloud) if config.cloud is not None else None
     local = build_chat_client(config.local) if config.local is not None else None
     cache_store = None
@@ -75,9 +91,7 @@ def _build_pipeline(config: Config) -> Pipeline:
     ):
         from local_splitter.pipeline.sem_cache import CacheStore
 
-        state_dir = Path.cwd() / ".local_splitter"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        cache_store = CacheStore(state_dir / "cache.sqlite", embed_dim=768)
+        cache_store = CacheStore(cache_db_url, embed_dim=768)
     return Pipeline(cloud=cloud, local=local, config=config, cache_store=cache_store)
 
 
@@ -94,6 +108,11 @@ def serve_http(
     host: str | None = typer.Option(None, "--host", help="Override transport.http_host."),
     port: int | None = typer.Option(None, "--port", help="Override transport.http_port."),
     upstream: str | None = typer.Option(None, "--upstream", help="Override the cloud upstream URL"),
+    cache_db_url: str | None = typer.Option(
+        None,
+        "--cache-db-url",
+        help="Postgres connection string for the T3 cache (LOCAL_SPLITTER_DB_URL env overrides the default).",
+    ),
     log_level: str = typer.Option("info", "--log-level"),
 ) -> None:
     """Run the FastAPI OpenAI-compatible proxy."""
@@ -103,7 +122,7 @@ def serve_http(
     config = _load(config_path)
     if upstream and config.cloud:
         config = replace(config, cloud=replace(config.cloud, endpoint=upstream))
-    pipeline = _build_pipeline(config)
+    pipeline = _build_pipeline(config, cache_db_url=cache_db_url or _cache_db_default())
 
     # Late import to keep CLI import cheap.
     from local_splitter.transport import create_app
@@ -136,7 +155,7 @@ def serve_mcp(
     """Run the MCP stdio server."""
     logging.basicConfig(level=log_level.upper())
     config = _load(config_path)
-    pipeline = _build_pipeline(config)
+    pipeline = _build_pipeline(config, cache_db_url=_cache_db_default())
 
     from local_splitter.transport import create_mcp_server
 
@@ -180,7 +199,7 @@ def transform_cmd(
     """
     logging.basicConfig(level=log_level.upper())
     config = _load(config_path)
-    pipeline = _build_pipeline(config)
+    pipeline = _build_pipeline(config, cache_db_url=_cache_db_default())
 
     # Read input.
     if prompt is not None:
@@ -274,6 +293,11 @@ def eval_cmd(
         "-s",
         help="Comma-separated subset names to run (default: all defined subsets).",
     ),
+    cache_db_url: str | None = typer.Option(
+        None,
+        "--cache-db-url",
+        help="Postgres connection string for the T3 cache (LOCAL_SPLITTER_DB_URL env overrides the default).",
+    ),
     log_level: str = typer.Option("warning", "--log-level"),
 ) -> None:
     """Run the evaluation harness on one or more workloads."""
@@ -328,9 +352,12 @@ def eval_cmd(
         ):
             from local_splitter.pipeline.sem_cache import CacheStore
 
-            cache_db = output / f"cache_{wl_path.stem}.sqlite"
             embed_dim = 768  # nomic-embed-text default
-            cache_store = CacheStore(cache_db, embed_dim=embed_dim)
+            cache_store = CacheStore(
+                cache_db_url or _cache_db_default(),
+                embed_dim=embed_dim,
+                namespace=f"cache_{wl_path.stem}",
+            )
 
         async def _run():
             return await run_matrix(

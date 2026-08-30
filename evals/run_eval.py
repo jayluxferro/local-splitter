@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -40,6 +41,13 @@ _log = logging.getLogger(__name__)
 
 OUTPUT = Path(".local_splitter/eval")
 WORKLOADS = Path("evals/workloads")
+
+# T3 semantic cache backend: one shared Postgres database, per-workload
+# namespaces instead of per-workload sqlite files.  LOCAL_SPLITTER_DB_URL
+# overrides the default (no CLI — this is a script).
+db_url = os.environ.get(
+    "LOCAL_SPLITTER_DB_URL", "postgresql://local_splitter@localhost:5432/local_splitter"
+)
 
 # Focus on the most informative subsets.
 EVAL_SUBSETS = {
@@ -113,8 +121,8 @@ async def main() -> None:
         print(f"  {wl_name}: {len(samples)} samples")
         print(f"{'=' * 60}")
 
-        # Fresh cache store per workload.
-        cache_store = CacheStore(OUTPUT / f"cache_{wl_name}.sqlite", embed_dim=768)
+        # Fresh cache store per workload (namespace-tagged rows in one DB).
+        cache_store = CacheStore(db_url, embed_dim=768, namespace=f"cache_{wl_name}")
 
         try:
             runs = await run_matrix(
