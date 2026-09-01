@@ -354,9 +354,7 @@ _MIGRATIONS: dict[int, Callable[..., None]] = {1: _migration_v1}
 # ---------------------------------------------------------------------------
 
 
-def open_cache_store(
-    dsn: str, *, embed_dim: int = 768, namespace: str = "default"
-) -> CacheStore:
+def open_cache_store(dsn: str, *, embed_dim: int = 768, namespace: str = "default") -> CacheStore:
     """Convenience opener used by cli.py, evals, and tests (open_database parity)."""
     return CacheStore(dsn, embed_dim=embed_dim, namespace=namespace)
 

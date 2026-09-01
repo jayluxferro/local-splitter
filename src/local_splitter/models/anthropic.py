@@ -115,6 +115,8 @@ class AnthropicClient:
             headers.update({k.lower(): v for k, v in extra_headers.items()})
 
         self._http = httpx.AsyncClient(
+            # # keepalive_expiry=2.0: retire pooled connections before the upstream uvicorn's 5s idle close (stale-connection ReadError race, 2026-09-01).
+            limits=httpx.Limits(keepalive_expiry=2.0),
             base_url=self.endpoint,
             timeout=timeout,
             transport=transport,
@@ -351,7 +353,9 @@ class AnthropicClient:
                     usage=usage,
                 )
         except httpx.HTTPError as e:
-            raise ModelBackendError(f"anthropic stream request failed: {transport_detail(e)}") from e
+            raise ModelBackendError(
+                f"anthropic stream request failed: {transport_detail(e)}"
+            ) from e
 
     # ------------------------------------------------------------------ embed
 
