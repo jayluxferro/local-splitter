@@ -115,6 +115,16 @@ class _FakeAsyncClient:
             self.build_request("POST", url, content=content, json=json, headers=headers)
         )
 
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _FakeResponse:
+        return await self.send(self.build_request(method, url, content=content, headers=headers))
+
     async def aclose(self) -> None:
         pass
 
@@ -491,3 +501,62 @@ def test_anthropic_sse_generator_empty_backend_error_typed_in_frame_and_log(
     assert payload["type"] == "error"
     assert payload["error"]["message"].startswith("ModelBackendError")
     assert any("ModelBackendError" in rec.getMessage() for rec in caplog.records)
+
+
+# --- Catch-all raw passthrough (count_tokens, models, …) ----------------------
+
+
+def test_catch_all_passthrough_count_tokens_raw_bytes(tool_client_factory):
+    """POST /v1/messages/count_tokens?beta=true is forwarded raw to the cloud
+    upstream — byte-identical body, path + query intact, auth header kept."""
+
+    body_bytes = json.dumps(
+        {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+    received: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> _FakeResponse:
+        received["path"] = request.url.path
+        received["query"] = request.url.query.decode()
+        received["content"] = request.content
+        received["auth"] = request.headers.get("x-api-key")
+        return _FakeResponse(200, {"content-type": "application/json"}, body=body_bytes)
+
+    _FakeAsyncClient._handler = handler
+    client = tool_client_factory()
+
+    r = client.post(
+        "/v1/messages/count_tokens?beta=true",
+        content=body_bytes,
+        headers={"x-api-key": "sk-123"},
+    )
+
+    assert r.status_code == 200
+    assert r.content == body_bytes
+    assert received["path"] == "/v1/messages/count_tokens"
+    assert received["query"] == "beta=true"
+    assert received["content"] == body_bytes
+    assert received["auth"] == "sk-123"
+
+
+def test_catch_all_passthrough_connect_error_502_names_type(tool_client_factory, caplog):
+    """Upstream connect failure on the catch-all still yields the typed 502
+    with the exception type in the body and the warning log."""
+
+    def handler(request: httpx.Request) -> _FakeResponse:
+        raise httpx.ConnectError("")
+
+    _FakeAsyncClient._handler = handler
+    client = tool_client_factory()
+
+    with caplog.at_level(logging.WARNING, logger="local_splitter.transport.http_proxy"):
+        r = client.post(
+            "/v1/messages/count_tokens",
+            content=b'{"messages": []}',
+            headers={"x-api-key": "sk"},
+        )
+
+    assert r.status_code == 502
+    assert r.json()["error"]["type"] == "upstream_error"
+    assert "ConnectError" in r.json()["error"]["message"]
+    assert any("ConnectError" in rec.getMessage() for rec in caplog.records)

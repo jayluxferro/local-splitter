@@ -452,6 +452,62 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
+    # ------------------------------------------------------------------ #
+    #  Catch-all raw passthrough (count_tokens, models, …)                #
+    # ------------------------------------------------------------------ #
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    async def passthrough(request: Request, path: str) -> Response:
+        """Catch-all raw passthrough — proxied untouched to the cloud upstream.
+
+        Registered LAST so every explicit route above wins.  Anything else
+        (count_tokens, unknown endpoints, …) is forwarded byte-identical:
+        the exact bytes received, same path and query, all headers minus
+        hop-by-hop.  No pipeline, no tactics, no JSON round-trip.
+        """
+        if config.cloud is None:
+            raise HTTPException(
+                status_code=502,
+                detail="passthrough requires a configured cloud backend",
+            )
+        raw_body = await request.body()
+        upstream_headers = {
+            k: v for k, v in request.headers.items() if k.lower() not in _HOP_HEADERS
+        }
+        url = f"{config.cloud.endpoint.rstrip('/')}/{path}"
+        if request.url.query:
+            url = f"{url}?{request.url.query}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=10.0),
+                headers={"user-agent": upstream_headers.get("user-agent", "")},
+            ) as client:
+                resp = await client.request(
+                    request.method, url, content=raw_body, headers=upstream_headers
+                )
+        except httpx.HTTPError as exc:
+            # Connect/send failures raise httpx exceptions whose str() is
+            # often EMPTY (ConnectTimeout, ReadError wrapping anyio.EndOfStream)
+            # — prefix the type or the client sees a blank message.
+            status = 504 if isinstance(exc, httpx.TimeoutException) else 502
+            etype = "upstream_timeout" if status == 504 else "upstream_error"
+            detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
+            _log.warning("local-splitter: upstream request to %s failed: %s", url, detail)
+            return JSONResponse(
+                {"error": {"type": etype, "message": detail}},
+                status_code=status,
+            )
+        resp_headers = {
+            k: v
+            for k, v in resp.headers.items()
+            if k.lower() not in ("transfer-encoding", "content-length", "content-encoding")
+        }
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers=resp_headers,
+        )
+
     return app
 
 
