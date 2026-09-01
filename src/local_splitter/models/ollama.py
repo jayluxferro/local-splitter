@@ -49,7 +49,12 @@ def _safe_text(resp: httpx.Response, max_len: int = 200) -> str:
 
 
 DEFAULT_NUM_CTX = 8192
-DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0)
+# connect=2.0 so an unreachable Ollama fails FAST and the fail-open path
+# falls through to the cloud model instead of tying up a worker.  During
+# the 2026-09-01 ollama outage, hung connects blocked workers until the
+# 5s connect timeout (and 120s reads when ollama accepted then stalled),
+# exhausting the pool so upstream layers timed out against us.
+DEFAULT_TIMEOUT = httpx.Timeout(connect=2.0, read=120.0, write=15.0, pool=5.0)
 
 
 def _map_done_reason(reason: str | None) -> FinishReason:
