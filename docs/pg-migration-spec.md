@@ -184,7 +184,10 @@ def open_cache_store(
 
 Module constants `DEFAULT_SIMILARITY_THRESHOLD`, `DEFAULT_TTL`,
 `DEFAULT_CHARS_PER_TOKEN` stay.  `_serialize`/struct and the
-sqlite-vec import go away.  The pipeline-facing functions (`lookup`,
+sqlite-vec import go away.  (Later, the dynamic-embeddings change
+removed `DEFAULT_CHARS_PER_TOKEN` when `num_ctx`-derived character caps
+were replaced by `chunked_embedding`'s chunk-and-pool.)  The
+pipeline-facing functions (`lookup`,
 `store_response`, `cache_embed_source`, `CacheLookupResult`, the
 redactor-normalization helpers) are untouched — this is a storage-layer
 swap only.

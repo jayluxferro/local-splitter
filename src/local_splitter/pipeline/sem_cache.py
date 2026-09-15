@@ -25,8 +25,8 @@ from typing import Any
 
 import psycopg
 
-from local_splitter.models import ChatClient, ModelBackendError
-from local_splitter.models.ollama import DEFAULT_NUM_CTX
+from local_splitter.chunked_embedding import embed_text_dynamic
+from local_splitter.models import ChatClient, ModelBackendError, OllamaClient
 
 from .types import StageEvent
 
@@ -34,7 +34,6 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.92
 DEFAULT_TTL = 86400  # 24 hours
-DEFAULT_CHARS_PER_TOKEN = 4  # conservative: ~4 chars per token for most text
 
 
 # ---------------------------------------------------------------------------
@@ -525,14 +524,16 @@ async def lookup(
             ],
         )
 
-    # Encoded/bloated payloads (e.g. from Palisade transform chains) can
-    # exceed the embedding model's context window.  Use the model's actual
-    # num_ctx (via OllamaClient.num_ctx) or fall back to DEFAULT_NUM_CTX.
-    # The limit is configurable via params["embed_max_chars"].  Fail-open:
-    # skip embedding rather than crashing the pipeline.
-    model_ctx = getattr(local, "num_ctx", None) or DEFAULT_NUM_CTX
-    embed_max = int(p.get("embed_max_chars", model_ctx * DEFAULT_CHARS_PER_TOKEN))
-    if len(cache_text) > embed_max:
+    # Prompts longer than the embedding model's context are no longer
+    # skipped: chunked_embedding splits them into overlapping windows and
+    # pools the vectors in one batched call, so T3 can cache arbitrarily
+    # large agent payloads (e.g. a Palisade-transformed request).  The
+    # old num_ctx-derived cap remains available as an explicit operator
+    # escape hatch — set params["embed_max_chars"] to skip embedding
+    # outright instead (the pre-chunking behavior).  Fail-open either
+    # way: skip rather than crash the pipeline.
+    embed_max = p.get("embed_max_chars")
+    if embed_max is not None and len(cache_text) > int(embed_max):
         return CacheLookupResult(
             hit=False,
             entry=None,
@@ -543,10 +544,9 @@ async def lookup(
                     decision="SKIP",
                     ms=0.0,
                     detail={
-                        "reason": "cache_text exceeds embedder context",
+                        "reason": "cache_text exceeds embed_max_chars",
                         "length": len(cache_text),
-                        "max_chars": embed_max,
-                        "num_ctx": model_ctx,
+                        "max_chars": int(embed_max),
                     },
                 )
             ],
@@ -554,8 +554,15 @@ async def lookup(
 
     t0 = time.perf_counter()
     try:
-        embeddings = await local.embed([cache_text])
-        embedding = embeddings[0]
+        embedding = await embed_text_dynamic(
+            cache_text,
+            model=getattr(local, "embed_model", None),
+            embed_many=local.embed,
+            # Only an Ollama backend can answer /api/show; anything else
+            # (OpenAI-compatible, fake) uses the fallback context without
+            # being probed.
+            endpoint=local.endpoint if isinstance(local, OllamaClient) else None,
+        )
     except (ModelBackendError, Exception) as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         _log.warning("T3 embed failed, treating as cache miss: %s", exc)
