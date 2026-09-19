@@ -94,10 +94,18 @@ def _build_pipeline(config: Config, cache_db_url: str) -> Pipeline:
         lexical = backend == "lexical"
         has_embedder = config.local is not None and config.local.embed_model
         if lexical or has_embedder:
+            # Namespace per chain: every manifold chain shares one cache DB,
+            # and the lookup filters by namespace + similarity but NOT by
+            # model — a shared "default" namespace let one chain serve
+            # another chain's cached answer (different cloud, different
+            # model's opinion).  The cloud endpoint is chain-unique (the
+            # --upstream rewrite lands before this runs), so derive the
+            # partition from it; no new config surface.
+            ns = f"chain:{config.cloud.endpoint}"
             if lexical:
-                cache_store = LexicalCacheStore(cache_db_url)
+                cache_store = LexicalCacheStore(cache_db_url, namespace=ns)
             else:
-                cache_store = CacheStore(cache_db_url, embed_dim=768)
+                cache_store = CacheStore(cache_db_url, embed_dim=768, namespace=ns)
     return Pipeline(cloud=cloud, local=local, config=config, cache_store=cache_store)
 
 
