@@ -66,6 +66,7 @@ def test_cloudless_lexical_t3_fails_loudly_not_crashing(tmp_path):
     """Regression (cross-cutting review m2): a config with lexical T3 and
     no models.cloud crashed with AttributeError on the namespace
     derivation; pre-arc it started with an inert cache.  Now ConfigError."""
+    import pathlib
     from dataclasses import replace
 
     import pytest
