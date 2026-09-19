@@ -215,6 +215,12 @@ class CacheStore:
 
         Returns a :class:`CacheEntry` if similarity ≥ ``threshold`` and
         the entry is within ``ttl`` seconds old.  Otherwise ``None``.
+
+        The ``embedding IS NOT NULL`` filter mirrors the lexical store's
+        ``cache_text IS NOT NULL``: both backends share one table, and a
+        lexical-written row has a NULL embedding.  Without the filter,
+        an all-lexical table yields a row whose ``<=>`` distance is NULL
+        and the Python-side ``distance > max_distance`` raises TypeError.
         """
         if not self._has_vec:
             # Fail-open: without pgvector the table may not even exist,
@@ -232,6 +238,7 @@ class CacheStore:
                    response, model, finish_reason, created_at
               FROM cache_entry
              WHERE namespace = %s
+               AND embedding IS NOT NULL
              ORDER BY embedding <=> %s
              LIMIT 1
             """,
@@ -421,6 +428,7 @@ class LexicalCacheStore(CacheStore):
         *,
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         ttl: int = DEFAULT_TTL,
+        ns_prefix: str = "",
     ) -> CacheEntry | None:
         """Find the most trigram-similar cached text (exact-scan parity).
 
@@ -429,12 +437,22 @@ class LexicalCacheStore(CacheStore):
         (including the degraded no-pg_trgm state).  The TTL filter lives
         in the WHERE clause so an expired near-duplicate cannot outrank
         a fresh exact match.
+
+        ``ns_prefix`` (the ``[ns:…]`` key prefix from
+        :func:`_ns_prefix`) must match *exactly*, never fuzzily: the
+        trigrams of a shared query body dominate the trigram set, so
+        plain ``similarity("[ns:acme]\\nq", "[ns:other]\\nq")`` reads
+        ~0.9 and tenant B would be served tenant A's cached answer at
+        any sane threshold.  The empty-prefix case excludes namespaced
+        rows symmetrically, so a later-added namespace can't be bypassed
+        by old keys either way.  (Rows whose body *literally* starts
+        with ``[ns:`` become unreachable without a namespace — a safe
+        false miss, not a wrong hit.)
         """
         if not self._has_trgm:
             return None
         cutoff = time.time() - ttl
-        row = self._conn.execute(
-            """
+        sql = """
             SELECT id, similarity(cache_text, %s) AS sim,
                    response, model, finish_reason, created_at
               FROM cache_entry
@@ -442,11 +460,17 @@ class LexicalCacheStore(CacheStore):
                AND cache_text IS NOT NULL
                AND created_at >= %s
                AND similarity(cache_text, %s) >= %s
-             ORDER BY sim DESC
-             LIMIT 1
-            """,
-            (cache_text, self._namespace, cutoff, cache_text, threshold),
-        ).fetchone()
+        """
+        args: list[Any] = [cache_text, self._namespace, cutoff, cache_text, threshold]
+        if ns_prefix:
+            # left()/equality (not LIKE): ns values are user-supplied and
+            # may contain % or _ pattern characters.
+            sql += " AND left(cache_text, %s) = %s"
+            args.extend((len(ns_prefix), ns_prefix))
+        else:
+            sql += " AND left(cache_text, 4) <> '[ns:'"
+        sql += " ORDER BY sim DESC LIMIT 1"
+        row = self._conn.execute(sql, args).fetchone()
         if row is None:
             return None
 
@@ -657,6 +681,20 @@ def cache_embed_source(
     return _cache_embed_text(messages, params or {}, meta)
 
 
+def _ns_prefix(params: dict[str, Any], meta: dict[str, Any] | None) -> str:
+    """The ``[ns:…]`` key prefix ``_cache_embed_text`` prepends (empty if none).
+
+    Factored out so the lexical backend can require the prefix to match
+    *exactly* — see :meth:`LexicalCacheStore.lookup_text` for why fuzzy
+    matching it would cross tenant boundaries.
+    """
+    key = params.get("cache_namespace_from_meta")
+    if not key:
+        return ""
+    ns = (meta or {}).get(str(key), "") or ""
+    return f"[ns:{ns}]\n" if ns else ""
+
+
 def _cache_embed_text(
     messages: list[dict[str, str]],
     params: dict[str, Any],
@@ -664,12 +702,8 @@ def _cache_embed_text(
 ) -> str:
     """User text optionally prefixed with a namespace from ``meta``."""
     base = _extract_cache_text(messages)
-    key = params.get("cache_namespace_from_meta")
-    if key:
-        ns = (meta or {}).get(str(key), "") or ""
-        if ns:
-            return f"[ns:{ns}]\n{base}"
-    return base
+    prefix = _ns_prefix(params, meta)
+    return f"{prefix}{base}" if prefix else base
 
 
 def _never_cache_patterns(params: dict[str, Any]) -> list[re.Pattern[str]]:
@@ -724,11 +758,12 @@ def _lookup_lexical(
     *,
     threshold: float,
     ttl: int,
+    ns_prefix: str = "",
 ) -> CacheLookupResult:
     """Lexical-backend lookup: trigram compare, no embed call anywhere."""
     t0 = time.perf_counter()
     try:
-        entry = store.lookup_text(cache_text, threshold=threshold, ttl=ttl)
+        entry = store.lookup_text(cache_text, threshold=threshold, ttl=ttl, ns_prefix=ns_prefix)
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         _log.warning("T3 cache lookup failed, treating as miss: %s", exc)
@@ -825,9 +860,18 @@ async def lookup(
 
     # Backend dispatch by store instance (see store_backend).  The
     # lexical path shares only the cache_text normalization with the
-    # embedding path; everything below the privacy gate differs.
+    # embedding path; everything below the privacy gate differs.  The
+    # namespace prefix rides along so the trigram filter can require it
+    # exactly (see LexicalCacheStore.lookup_text) — for the embedding
+    # backend it stays inside the embedded text.
     if isinstance(store, LexicalCacheStore):
-        return _lookup_lexical(store, cache_text, threshold=threshold, ttl=ttl)
+        return _lookup_lexical(
+            store,
+            cache_text,
+            threshold=threshold,
+            ttl=ttl,
+            ns_prefix=_ns_prefix(p, meta),
+        )
 
     # --- embedding backend ---
     if local is None:
