@@ -1,5 +1,3 @@
-
-
 def test_cache_namespace_is_per_chain(tmp_path):
     """Each manifold chain shares one cache DB but must partition by its
     cloud endpoint — a shared 'default' namespace let one chain serve
@@ -18,6 +16,7 @@ def test_cache_namespace_is_per_chain(tmp_path):
     cfg_b = replace(cfg_b, cloud=replace(cfg_b.cloud, endpoint="http://127.0.0.1:22243"))
 
     from conftest import TEST_DB_URL as db
+
     pipe_a = _build_pipeline(cfg_a, db)
     pipe_b = _build_pipeline(cfg_b, db)
     assert pipe_a.cache_store._namespace != pipe_b.cache_store._namespace
@@ -32,7 +31,6 @@ def test_concurrent_store_init_on_fresh_db_single_flight():
     import threading
 
     import psycopg
-    import pytest
     from local_splitter.pipeline.sem_cache import LexicalCacheStore
 
     from conftest import TEST_DB_URL
