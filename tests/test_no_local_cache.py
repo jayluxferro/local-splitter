@@ -60,3 +60,19 @@ def test_concurrent_store_init_on_fresh_db_single_flight():
     with psycopg.connect(TEST_DB_URL, autocommit=True) as conn:
         versions = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
     assert versions == {1, 2}
+
+
+def test_cloudless_lexical_t3_fails_loudly_not_crashing(tmp_path):
+    """Regression (cross-cutting review m2): a config with lexical T3 and
+    no models.cloud crashed with AttributeError on the namespace
+    derivation; pre-arc it started with an inert cache.  Now ConfigError."""
+    from dataclasses import replace
+
+    import pytest
+    from local_splitter.cli import _build_pipeline
+    from local_splitter.config import ConfigError, load_config
+
+    preset = pathlib.Path(__file__).parents[1] / "configs/proxy/no-local.yaml"
+    cfg = replace(load_config(str(preset)), cloud=None)
+    with pytest.raises(ConfigError, match="cloud"):
+        _build_pipeline(cfg, "postgresql://x/y")

@@ -101,6 +101,15 @@ def _build_pipeline(config: Config, cache_db_url: str) -> Pipeline:
             # model's opinion).  The cloud endpoint is chain-unique (the
             # --upstream rewrite lands before this runs), so derive the
             # partition from it; no new config surface.
+            if config.cloud is None:
+                # Pre-arc a cloud-less + T3 config started with an inert
+                # cache; the namespace derivation crashed on None.  Fail
+                # loudly instead — a cache with no cloud to serve is a
+                # configuration error.
+                raise ConfigError(
+                    "t3_sem_cache requires a cloud backend (models.cloud) — "
+                    "a cache with nothing to serve is a config error"
+                )
             ns = f"chain:{config.cloud.endpoint}"
             if lexical:
                 cache_store = LexicalCacheStore(cache_db_url, namespace=ns)
