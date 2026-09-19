@@ -119,6 +119,11 @@ section — omit it and T1/T2/T4 switch off structurally. But the T3
 cache used to be coupled to the local embedder too, so no-local also
 meant no cache. The `t3_sem_cache.backend` knob fixes that:
 
+The lexical store also namespaces itself per chain (derived from the
+cloud endpoint, which `--upstream` makes unique per manifold chain), so
+five chains can share one cache database without ever serving each
+other answers.
+
 | Backend | Needs | Lookup | Threshold note |
 |---------|-------|--------|----------------|
 | `embedding` (default) | local embedder (Ollama) + pgvector | cosine KNN over embeddings | 0.92–0.95 |
