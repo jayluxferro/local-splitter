@@ -171,8 +171,26 @@ class CacheStore:
         statement on its own, and the DDL is idempotent, so a
         mid-migration failure simply leaves the version unrecorded and
         the next open retries to completion.
+
+        Cross-process serialization (hostile review M2): five manifold
+        chains open stores against ONE shared DB at startup, and the
+        snapshot-then-INSERT pattern raced — UniqueViolation on the
+        version PK, DuplicateTable, pg_class collisions; 3-4 of 5 chains
+        died on first deploy of no-local mode.  A session-level advisory
+        lock makes initialization single-flight: losers block briefly,
+        then see the winner's versions in their snapshot.  Belt and
+        braces: a PK violation on the version INSERT is absorbed as
+        success (another process applied it while we worked).
         """
         cur = self._conn.cursor()
+        cur.execute("SELECT pg_advisory_lock(%s)", (_MIGRATION_LOCK_ID,))
+        try:
+            self._apply_migrations_locked(cur)
+        finally:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_ID,))
+        cur.close()
+
+    def _apply_migrations_locked(self, cur) -> None:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -188,11 +206,15 @@ class CacheStore:
             _log.info("applying local_splitter schema migration v%d", version)
             migration(self._conn, **self._migration_kwargs())
             # Epoch millis, matching lattice's BIGINT applied_at (now_ms).
-            cur.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
-                (version, int(time.time() * 1000)),
-            )
-        cur.close()
+            try:
+                cur.execute(
+                    "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
+                    (version, int(time.time() * 1000)),
+                )
+            except psycopg.errors.UniqueViolation:
+                # Lost a race despite the advisory lock (e.g. an unlocked
+                # older process) — the version IS applied; that is success.
+                self._conn.rollback()
 
     def _migration_kwargs(self) -> dict[str, Any]:
         """Capabilities handed to every migration function.
@@ -612,6 +634,10 @@ def _migration_v2(
         )
     cur.close()
 
+
+# Advisory-lock id for single-flight schema initialization across the
+# five chains that share one cache DB.  Arbitrary constant, stable forever.
+_MIGRATION_LOCK_ID = 0x5F4C5331  # "_LS1"
 
 _MIGRATIONS: dict[int, Callable[..., None]] = {1: _migration_v1, 2: _migration_v2}
 
