@@ -1,14 +1,21 @@
 """T3 sem_cache — semantic similarity cache.
 
-Every request is embedded by the local embedding model.  If a
-near-duplicate exists in the cache (cosine similarity ≥ threshold), the
-cached response is served directly.  On a miss the request proceeds to
-the cloud and the response is stored for future hits.
+Two backends share one ``cache_entry`` table in the local Postgres
+instance (DSN from ``LOCAL_SPLITTER_DB_URL``):
 
-Storage: Postgres + ``pgvector``.  The cache is a ``cache_entry`` table
-in the local Postgres instance (DSN from ``LOCAL_SPLITTER_DB_URL``),
-shared by every workload — per-workload eval caches are rows scoped by
-``namespace`` instead of separate ``cache_{wl}.sqlite`` files.
+- **embedding** (default, :class:`CacheStore`) — every request is
+  embedded by the local embedding model; a near-duplicate (cosine
+  similarity ≥ threshold via pgvector ``<=>``) is served directly.
+  Needs a local model.
+- **lexical** (:class:`LexicalCacheStore`) — pg_trgm trigram similarity
+  over the raw cache text.  Needs no local model at all: this is what
+  keeps the cache alive in the no-local mode (``configs/proxy/no-local.yaml``).
+  Trigram similarity reads lower than cosine — roughly cosine 0.95 ≈
+  trigram 0.65 — so pair this backend with a lower threshold.
+
+The store instance selects the code path (see :func:`store_backend`);
+on a miss the request proceeds to the cloud and the response is stored
+for future hits, identically in both backends.
 
 Fail-open: embedding or DB errors fall back to a cache miss
 (ARCHITECTURE.md principle 2).
@@ -179,13 +186,23 @@ class CacheStore:
             if version in applied:
                 continue
             _log.info("applying local_splitter schema migration v%d", version)
-            migration(self._conn, embed_dim=self._embed_dim, has_vec=self._has_vec)
+            migration(self._conn, **self._migration_kwargs())
             # Epoch millis, matching lattice's BIGINT applied_at (now_ms).
             cur.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, %s)",
                 (version, int(time.time() * 1000)),
             )
         cur.close()
+
+    def _migration_kwargs(self) -> dict[str, Any]:
+        """Capabilities handed to every migration function.
+
+        All migrations share one uniform signature so the runner stays
+        backend-agnostic; ``LexicalCacheStore`` overrides this to add
+        ``has_trgm`` (and to source ``has_vec`` from its own lighter,
+        server-side-only check).
+        """
+        return {"embed_dim": self._embed_dim, "has_vec": self._has_vec, "has_trgm": False}
 
     def lookup(
         self,
@@ -294,6 +311,192 @@ class CacheStore:
             pass
 
 
+class LexicalCacheStore(CacheStore):
+    """pg_trgm trigram cache — T3 with no embeddings and no local model.
+
+    Same ``cache_entry`` table and TTL/namespace semantics as the vector
+    backend, but the lookup key is the raw cache text (the same
+    normalization ``_cache_embed_text`` produces) compared with
+    ``similarity(cache_text, %s)``.  This is what lets the splitter run
+    with zero ollama dependency (the ``no-local`` preset) while keeping
+    a working cache: trigram similarity reads lower than embedding
+    cosine — roughly, cosine 0.95 ≈ trigram 0.65 — so the threshold
+    must come down with this backend.
+
+    Degradation mirrors ``has_vec`` fail-open: if ``pg_trgm`` cannot be
+    provisioned, the store is inert (lookups miss, stores return 0).
+    One honest wrinkle: the *table* itself is still created by v1,
+    which needs the server-side ``vector`` type for the (unused,
+    NULL) embedding column.  We therefore provision pgvector here too —
+    but only server-side; unlike the base class we never import the
+    pgvector Python package or register adapters, because this backend
+    never binds a vector value.  A Postgres with pg_trgm but no vector
+    files leaves the lexical store inert.
+
+    ``similarity()`` returns a float4; ``distance``/``similarity`` on
+    the returned :class:`CacheEntry` are derived from it (1 - sim), so
+    downstream similarity logging reads like the vector backend's.
+    """
+
+    def __init__(self, dsn: str, *, namespace: str = "default") -> None:
+        # Not calling CacheStore.__init__: no pgvector Python adapters,
+        # and the trgm check must run before migrations so v2 knows
+        # whether to add the column/index.  The 768 here only shapes the
+        # (never-written, NULL) embedding column in v1's DDL — Postgres
+        # rejects vector(0) — it is NOT an expected embedding size.
+        self._embed_dim = 768
+        self._namespace = namespace
+        self._has_vec = False
+        self._has_trgm = False
+        self._conn = psycopg.connect(dsn)
+        # Autocommit, same rationale as the base class: per-statement
+        # persistence restores the sqlite-era write semantics.
+        self._conn.autocommit = True
+        self._has_vector_type = self._provision_vector_type()
+        self._try_load_trgm()
+        self._apply_migrations()
+        self._ensure_trgm_index()
+
+    def _migration_kwargs(self) -> dict[str, Any]:
+        return {
+            "embed_dim": self._embed_dim,
+            # In this subclass the flag only gates v1's table creation;
+            # no vector value is ever written through this store.
+            "has_vec": self._has_vector_type,
+            "has_trgm": self._has_trgm,
+        }
+
+    @property
+    def has_trgm(self) -> bool:
+        """True iff pg_trgm is available and cache writes will persist."""
+        return self._has_trgm
+
+    def _provision_vector_type(self) -> bool:
+        """Server-side-only pgvector check so v1 can create the table."""
+        try:
+            self._conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        except Exception as exc:
+            _log.warning(
+                "could not create vector extension (%s); lexical cache table unavailable", exc
+            )
+            return False
+        row = self._conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone()
+        if row is None:
+            _log.warning("pgvector extension not installed; lexical cache table unavailable")
+            return False
+        return True
+
+    def _try_load_trgm(self) -> None:
+        """Provision pg_trgm (fail-open, mirrors ``_try_load_vec``)."""
+        try:
+            self._conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        except Exception as exc:
+            _log.warning("could not create pg_trgm extension (%s); lexical cache disabled", exc)
+            return
+        row = self._conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'").fetchone()
+        if row is None:
+            _log.warning("pg_trgm extension not installed; lexical cache disabled")
+            return
+        self._has_trgm = True
+
+    def _ensure_trgm_index(self) -> None:
+        """Create the GIN trgm index if v2 predated a working pg_trgm.
+
+        v2 records its version even when pg_trgm was unavailable (v1
+        parity), so a database first opened by the *vector* store gets
+        the cache_text column (v2 adds it unconditionally) but no index.
+        The DDL is idempotent, so simply re-run it on every lexical
+        open — a catalog check once the index exists.
+        """
+        if not self._has_trgm or not self._has_vector_type:
+            return
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cache_entry_trgm "
+            "ON cache_entry USING gin (cache_text gin_trgm_ops)"
+        )
+
+    def lookup_text(
+        self,
+        cache_text: str,
+        *,
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        ttl: int = DEFAULT_TTL,
+    ) -> CacheEntry | None:
+        """Find the most trigram-similar cached text (exact-scan parity).
+
+        Returns a :class:`CacheEntry` when similarity ≥ ``threshold``
+        and the entry is within ``ttl`` seconds old; ``None`` otherwise
+        (including the degraded no-pg_trgm state).  The TTL filter lives
+        in the WHERE clause so an expired near-duplicate cannot outrank
+        a fresh exact match.
+        """
+        if not self._has_trgm:
+            return None
+        cutoff = time.time() - ttl
+        row = self._conn.execute(
+            """
+            SELECT id, similarity(cache_text, %s) AS sim,
+                   response, model, finish_reason, created_at
+              FROM cache_entry
+             WHERE namespace = %s
+               AND cache_text IS NOT NULL
+               AND created_at >= %s
+               AND similarity(cache_text, %s) >= %s
+             ORDER BY sim DESC
+             LIMIT 1
+            """,
+            (cache_text, self._namespace, cutoff, cache_text, threshold),
+        ).fetchone()
+        if row is None:
+            return None
+
+        rowid, sim, response, model, finish_reason, created_at = row
+        similarity = float(sim)
+        return CacheEntry(
+            rowid=rowid,
+            distance=1.0 - similarity,
+            similarity=similarity,
+            response=response,
+            model=model,
+            finish_reason=finish_reason,
+            created_at=created_at,
+        )
+
+    def store_text(
+        self,
+        *,
+        cache_text: str,
+        response: str,
+        model: str,
+        finish_reason: str,
+    ) -> int:
+        """Insert a text-keyed entry; returns its rowid (0 when degraded)."""
+        if not self._has_trgm:
+            return 0
+        row = self._conn.execute(
+            """
+            INSERT INTO cache_entry (namespace, cache_text, response, model,
+                                     finish_reason, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (self._namespace, cache_text, response, model, finish_reason, time.time()),
+        ).fetchone()
+        return int(row[0])
+
+
+def store_backend(store: "CacheStore | None") -> str:
+    """Which code path a store instance drives: ``"lexical"`` or ``"embedding"``.
+
+    The runtime source of truth for every backend-aware gate (pre-cloud
+    activation, miss-path store, the MCP cache_lookup tool): the config
+    knob only chooses the class ``_build_pipeline`` constructs, so a
+    hand-wired Pipeline is always consistent with whatever store it was
+    actually given.
+    """
+    return "lexical" if isinstance(store, LexicalCacheStore) else "embedding"
+
+
 # ---------------------------------------------------------------------------
 # Schema migrations
 # ---------------------------------------------------------------------------
@@ -311,6 +514,7 @@ def _migration_v1(
     *,
     embed_dim: int,
     has_vec: bool,
+    has_trgm: bool = False,  # uniform migration signature; unused here
 ) -> None:
     """v1 — ``cache_entry`` (the whole schema; skipped without pgvector).
 
@@ -345,7 +549,47 @@ def _migration_v1(
     cur.close()
 
 
-_MIGRATIONS: dict[int, Callable[..., None]] = {1: _migration_v1}
+def _migration_v2(
+    conn: psycopg.Connection,
+    *,
+    embed_dim: int,  # uniform migration signature; unused here
+    has_vec: bool,
+    has_trgm: bool = False,
+) -> None:
+    """v2 — lexical backend: ``cache_text`` column (+ GIN trgm index).
+
+    The vector backend never persisted the cache text (only its
+    embedding), so the lexical backend — whose lookup key *is* the text
+    — needs a column.  It is nullable and left NULL by vector-backend
+    inserts, which is what lets both backends share one table: a
+    ``vector``-written row has ``cache_text IS NULL`` (and never matches
+    a trigram lookup), a lexical row has ``embedding IS NULL`` (v1
+    created the column without NOT NULL, so no ALTER was needed).
+
+    The column is added whenever the table exists, *regardless* of
+    pg_trgm — the schema should not depend on which backend happened to
+    open the database first.  Only the index needs trgm; when it's
+    missing here, :meth:`LexicalCacheStore._ensure_trgm_index` creates
+    it on a later lexical open (the version is recorded either way, v1
+    parity — the index is a pure optimization, so that gap is safe).
+    """
+    if not has_vec:
+        return  # no table (v1 skipped) — nothing to alter
+    cur = conn.cursor()
+    cur.execute("ALTER TABLE cache_entry ADD COLUMN IF NOT EXISTS cache_text TEXT")
+    if has_trgm:
+        # gin_trgm_ops lets the planner serve ``similarity(a, b) >= const``
+        # filters from the index (with a recheck); lookups remain exact,
+        # not approximate — same deliberate no-hnsw stance as the vector
+        # side.
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cache_entry_trgm "
+            "ON cache_entry USING gin (cache_text gin_trgm_ops)"
+        )
+    cur.close()
+
+
+_MIGRATIONS: dict[int, Callable[..., None]] = {1: _migration_v1, 2: _migration_v2}
 
 
 # ---------------------------------------------------------------------------
@@ -474,17 +718,72 @@ class CacheLookupResult:
     events: list[StageEvent]
 
 
+def _lookup_lexical(
+    store: LexicalCacheStore,
+    cache_text: str,
+    *,
+    threshold: float,
+    ttl: int,
+) -> CacheLookupResult:
+    """Lexical-backend lookup: trigram compare, no embed call anywhere."""
+    t0 = time.perf_counter()
+    try:
+        entry = store.lookup_text(cache_text, threshold=threshold, ttl=ttl)
+    except Exception as exc:
+        elapsed = (time.perf_counter() - t0) * 1000
+        _log.warning("T3 cache lookup failed, treating as miss: %s", exc)
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="ERROR",
+                    ms=elapsed,
+                    detail={"error": str(exc)},
+                )
+            ],
+        )
+
+    total_ms = (time.perf_counter() - t0) * 1000
+    if entry is not None:
+        return CacheLookupResult(
+            hit=True,
+            entry=entry,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="HIT",
+                    ms=total_ms,
+                    detail={"similarity": round(entry.similarity, 4)},
+                )
+            ],
+        )
+
+    return CacheLookupResult(
+        hit=False,
+        entry=None,
+        embedding=None,
+        events=[StageEvent(stage="t3_cache_lookup", decision="MISS", ms=total_ms)],
+    )
+
+
 async def lookup(
     messages: list[dict[str, str]],
     *,
-    local: ChatClient,
+    local: ChatClient | None,
     store: CacheStore,
     params: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
 ) -> CacheLookupResult:
-    """Embed the request and search the cache.
+    """Search the cache for the request.
 
-    On embedding failure, returns a miss (fail-open).
+    Embedding backend: embed the request (via ``local``) and run the
+    vector KNN.  Lexical store: pass the raw cache text straight to the
+    store — no embed call, no local client needed.  On embedding or DB
+    failure, returns a miss (fail-open).
     """
     p = params or {}
     threshold = float(p.get("similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD))
@@ -524,6 +823,31 @@ async def lookup(
             ],
         )
 
+    # Backend dispatch by store instance (see store_backend).  The
+    # lexical path shares only the cache_text normalization with the
+    # embedding path; everything below the privacy gate differs.
+    if isinstance(store, LexicalCacheStore):
+        return _lookup_lexical(store, cache_text, threshold=threshold, ttl=ttl)
+
+    # --- embedding backend ---
+    if local is None:
+        # Unreachable through the pipeline (pre_cloud gates activation on
+        # has_local for the embedding backend); kept as a fail-open SKIP
+        # for direct callers so the old AttributeError can't resurface.
+        return CacheLookupResult(
+            hit=False,
+            entry=None,
+            embedding=None,
+            events=[
+                StageEvent(
+                    stage="t3_cache_lookup",
+                    decision="SKIP",
+                    ms=0.0,
+                    detail={"reason": "no local embedder"},
+                )
+            ],
+        )
+
     # Prompts longer than the embedding model's context are no longer
     # skipped: chunked_embedding splits them into overlapping windows and
     # pools the vectors in one batched call, so T3 can cache arbitrarily
@@ -531,7 +855,8 @@ async def lookup(
     # old num_ctx-derived cap remains available as an explicit operator
     # escape hatch — set params["embed_max_chars"] to skip embedding
     # outright instead (the pre-chunking behavior).  Fail-open either
-    # way: skip rather than crash the pipeline.
+    # way: skip rather than crash the pipeline.  (Lexical mode has no
+    # embedding cost, so the cap doesn't apply there.)
     embed_max = p.get("embed_max_chars")
     if embed_max is not None and len(cache_text) > int(embed_max):
         return CacheLookupResult(
@@ -628,7 +953,7 @@ async def lookup(
 
 
 def store_response(
-    embedding: list[float],
+    embedding: list[float] | None,
     *,
     response: str,
     model: str,
@@ -640,7 +965,10 @@ def store_response(
 ) -> StageEvent:
     """Store a cloud response in the cache after a miss.
 
-    Returns a stage event for the trace.  Errors are swallowed (fail-open).
+    The store instance picks the key: a lexical store persists
+    ``cache_text`` (``embedding`` is ignored/None there), the vector
+    store persists ``embedding``.  Returns a stage event for the trace.
+    Errors are swallowed (fail-open).
     """
     p = params or {}
     ct = cache_text or ""
@@ -656,6 +984,45 @@ def store_response(
             decision="SKIP",
             ms=0.0,
             detail={"reason": reason},
+        )
+
+    if isinstance(cache_store, LexicalCacheStore):
+        if not ct:
+            # No user text to key on — the pipeline gate normally filters
+            # this out (empty cache_text ⇒ no lookup either); direct
+            # callers get a visible SKIP instead of a NULL-keyed row.
+            return StageEvent(
+                stage="t3_cache_store",
+                decision="SKIP",
+                ms=0.0,
+                detail={"reason": "no cache text"},
+            )
+        t0 = time.perf_counter()
+        try:
+            cache_store.store_text(
+                cache_text=ct, response=response, model=model, finish_reason=finish_reason
+            )
+        except Exception as exc:
+            elapsed = (time.perf_counter() - t0) * 1000
+            _log.warning("T3 cache store failed: %s", exc)
+            return StageEvent(
+                stage="t3_cache_store",
+                decision="ERROR",
+                ms=elapsed,
+                detail={"error": str(exc)},
+            )
+        elapsed = (time.perf_counter() - t0) * 1000
+        return StageEvent(stage="t3_cache_store", decision="STORED", ms=elapsed)
+
+    if embedding is None:
+        # Unreachable through the pipeline (its store gate requires a
+        # non-None embedding for the vector backend); direct callers get
+        # a visible SKIP rather than a TypeError from psycopg.
+        return StageEvent(
+            stage="t3_cache_store",
+            decision="SKIP",
+            ms=0.0,
+            detail={"reason": "no embedding"},
         )
 
     t0 = time.perf_counter()
@@ -679,7 +1046,9 @@ __all__ = [
     "CacheEntry",
     "CacheLookupResult",
     "CacheStore",
+    "LexicalCacheStore",
     "cache_embed_source",
     "lookup",
+    "store_backend",
     "store_response",
 ]

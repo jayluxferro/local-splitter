@@ -88,7 +88,14 @@ async def run_pre_cloud(
                 t3_cache_entry=None,
             )
 
-    t3_active = tactics.t3_sem_cache and has_local and cache_store is not None and auto_route
+    # A lexical store works with no local model at all (trigram over raw
+    # text); the embedding store still needs one to embed every request.
+    t3_active = (
+        tactics.t3_sem_cache
+        and cache_store is not None
+        and auto_route
+        and (_sem_cache.store_backend(cache_store) == "lexical" or has_local)
+    )
 
     # --- T3 lookup ---
     if t3_active:

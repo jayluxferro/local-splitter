@@ -87,6 +87,7 @@ backend — the splitter calls it on your behalf.
 | [`proxy/recommended`](configs/proxy/recommended.yaml) | T1+T2 | 45-79% | **Best default** — route + compress |
 | [`proxy/max-savings`](configs/proxy/max-savings.yaml) | T1+T2+T3 | 43-80% | Adds caching — best for repetitive workloads |
 | [`proxy/rag-heavy`](configs/proxy/rag-heavy.yaml) | T1+T2+T3+T4+T5 | 51% on RAG | Long-context workloads with retrieved chunks |
+| [`proxy/no-local`](configs/proxy/no-local.yaml) | T3 (lexical) | cache hits only | **No Ollama at all** — trigram cache, cloud-only |
 
 ```sh
 cp configs/proxy/recommended.yaml config.yaml
@@ -110,6 +111,40 @@ prompts for the agent's own model.
 cp configs/mcp/recommended.yaml config.yaml
 # No cloud config needed — just Ollama
 ```
+
+### Without a local LLM
+
+Every local-model tactic gates on the presence of the `local:` config
+section — omit it and T1/T2/T4 switch off structurally. But the T3
+cache used to be coupled to the local embedder too, so no-local also
+meant no cache. The `t3_sem_cache.backend` knob fixes that:
+
+| Backend | Needs | Lookup | Threshold note |
+|---------|-------|--------|----------------|
+| `embedding` (default) | local embedder (Ollama) + pgvector | cosine KNN over embeddings | 0.92–0.95 |
+| `lexical` | pg_trgm only (no local model at all) | trigram `similarity()` over the raw cache text | reads lower than cosine: 0.95 cosine ≈ 0.65 trigram |
+
+The [`proxy/no-local`](configs/proxy/no-local.yaml) preset is the
+whole thing wired up — cloud-only, T1/T2 off, T3 on the lexical
+backend at threshold 0.65:
+
+```sh
+cp configs/proxy/no-local.yaml config.yaml
+# No Ollama needed — just a cloud endpoint and the cache Postgres
+# (LOCAL_SPLITTER_DB_URL; needs the pgvector + pg_trgm extensions)
+```
+
+Tradeoffs, honestly: exact repeats (agent retries, resubmits,
+multi-agent same-prompt) hit at the same rate as the embedding backend
+with ~90x lower lookup latency (no embed call). Aggressively reworded
+paraphrases hit *less* — trigram similarity is literal, so
+"Summarize the tradeoffs between REST and GraphQL APIs" vs "What are
+the pros and cons of REST compared to GraphQL?" scores ≈0.26 and
+misses at 0.65. If your workload paraphrases heavily, stay on the
+embedding backend. Measure with `uv run python tools/bench_sem_cache.py`.
+
+In a manifold chain, compression is strata's job anyway — this preset
+deliberately keeps the splitter to caching only.
 
 ### Eval results per workload
 

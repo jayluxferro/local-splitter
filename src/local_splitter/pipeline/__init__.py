@@ -227,6 +227,13 @@ class Pipeline:
         t3_params = tac.params.get("t3_sem_cache") or {}
         meta_dict = dict(request.meta)
         cache_key_text = _sem_cache.cache_embed_source(request.messages, t3_params, meta_dict)
+        # The store picks the cache key: a lexical store keys on the
+        # text (no embedding exists), a vector store on the embedding.
+        # Mirroring that split here keeps an embed failure from blocking
+        # a lexical store, while an empty cache_text stores in neither.
+        t3_can_store = cache_embedding is not None or (
+            _sem_cache.store_backend(self.cache_store) == "lexical" and bool(cache_key_text)
+        )
 
         # --- T4 draft-review (auto requests, replaces direct cloud call) ---
         if tac.t4_draft and has_local and request.model_hint == "auto":
@@ -245,7 +252,7 @@ class Pipeline:
                 reply = draft_result.review
 
                 # T3 store: cache the final answer (draft or revised).
-                if t3_active and cache_embedding is not None and self.cache_store is not None:
+                if t3_active and t3_can_store and self.cache_store is not None:
                     store_event = _sem_cache.store_response(
                         cache_embedding,
                         response=reply.content,
@@ -317,7 +324,7 @@ class Pipeline:
         )
 
         # --- T3 store on miss ---
-        if t3_active and cache_embedding is not None and self.cache_store is not None:
+        if t3_active and t3_can_store and self.cache_store is not None:
             store_event = _sem_cache.store_response(
                 cache_embedding,
                 response=reply.content,

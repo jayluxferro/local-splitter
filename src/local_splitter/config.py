@@ -35,6 +35,15 @@ TACTIC_DISABLE_NAMES = frozenset(
 
 Backend = Literal["ollama", "openai_compat", "anthropic"]
 
+# T3 semantic-cache backends (``pipeline.t3_sem_cache.backend``).  The
+# value only selects which store class ``_build_pipeline`` constructs —
+# at runtime the store object itself decides the lookup/store code path.
+# "embedding" is the original pgvector cosine backend and needs a local
+# embedder; "lexical" is pg_trgm trigram similarity and needs no local
+# model at all (the whole point of the no-local mode).
+T3_CACHE_BACKENDS = ("embedding", "lexical")
+DEFAULT_T3_CACHE_BACKEND = "embedding"
+
 
 class ConfigError(ValueError):
     """Raised when a config file is missing required fields or malformed."""
@@ -126,6 +135,16 @@ class TacticsConfig:
             stage = data.get(key)
             if isinstance(stage, dict):
                 params[key] = {k: v for k, v in stage.items() if k != "enabled"}
+
+        # Fail loudly at load time on an unknown T3 backend — a typo here
+        # would otherwise silently fall back to the embedding backend and
+        # (with no local section) silently disable the cache instead.
+        t3_backend = (params.get("t3_sem_cache") or {}).get("backend")
+        if t3_backend is not None and t3_backend not in T3_CACHE_BACKENDS:
+            raise ConfigError(
+                f"pipeline.t3_sem_cache.backend must be one of {T3_CACHE_BACKENDS}, "
+                f"got {t3_backend!r}"
+            )
 
         return cls(
             t1_route=enabled("t1_route"),
@@ -298,11 +317,13 @@ def load_config(path: Path | str | None = None) -> Config:
 
 
 __all__ = [
+    "DEFAULT_T3_CACHE_BACKEND",
     "AdaptiveConfig",
     "Backend",
     "Config",
     "ConfigError",
     "ModelConfig",
+    "T3_CACHE_BACKENDS",
     "TACTIC_DISABLE_NAMES",
     "TacticsConfig",
     "TransportConfig",

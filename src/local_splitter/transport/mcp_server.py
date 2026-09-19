@@ -227,24 +227,27 @@ def create_mcp_server(pipeline: Pipeline, config: Config) -> FastMCP:
             "Look up a request in the T3 semantic cache without writing. "
             "Optional ``meta`` (e.g. tool_name, tag, session_id) is passed through "
             "to T3 skip/namespace rules. Returns NOT_IMPLEMENTED when T3 is disabled "
-            "or no local backend."
+            "or no usable cache backend."
         ),
     )
     async def split_cache_lookup(
         messages: list[Message],
         meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from local_splitter.pipeline.sem_cache import lookup, store_backend
+
         if (
             not config.tactics.t3_sem_cache
-            or pipeline.local is None
             or pipeline.cache_store is None
+            # A lexical store needs no local model (trigram over raw
+            # text); the embedding store needs one to embed the lookup.
+            or (pipeline.local is None and store_backend(pipeline.cache_store) != "lexical")
         ):
             return {
                 "hit": False,
                 "stage": "t3_sem_cache",
-                "note": "T3 sem_cache is disabled or no local backend / cache store",
+                "note": "T3 sem_cache is disabled or no usable cache backend",
             }
-        from local_splitter.pipeline.sem_cache import lookup
 
         try:
             result = await lookup(

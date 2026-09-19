@@ -10,11 +10,14 @@ Tests cover:
 
 from __future__ import annotations
 
+from typing import Any
+
 from local_splitter.config import Config, ModelConfig, TacticsConfig
 from local_splitter.models import ModelBackendError, Usage
 from local_splitter.pipeline import Pipeline, PipelineRequest
 from local_splitter.pipeline.sem_cache import (
     CacheStore,
+    LexicalCacheStore,
     lookup,
     store_response,
 )
@@ -35,6 +38,12 @@ def _store() -> CacheStore:
     # fixture, so the non-DB tests keep running without Postgres.
     drop_cache_tables()
     return CacheStore(TEST_DB_URL, embed_dim=EMBED_DIM)
+
+
+def _lexical_store() -> LexicalCacheStore:
+    # Same drop-before-construct isolation as _store().
+    drop_cache_tables()
+    return LexicalCacheStore(TEST_DB_URL)
 
 
 def _config(*, t3: bool = True, t1: bool = False, **t3_params) -> Config:
@@ -397,3 +406,258 @@ async def test_t1_complex_then_t3_miss() -> None:
     assert "t3_cache_store" in stages
     assert store.size == 1
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# Lexical backend (pg_trgm) — T3 with no local model anywhere
+# ---------------------------------------------------------------------------
+#
+# Trigram similarity reads lower than embedding cosine (cosine 0.95 ≈
+# trigram 0.65), so these tests run at 0.65.  Pair values below were
+# probed against real pg_trgm: the paraphrase pair scores ≈0.84, the
+# unrelated pair ≈0.03.
+
+_LEX_THRESHOLD = 0.65
+_LEX_Q = "what is the capital of France?"
+_LEX_PARAPHRASE = "what's the capital of France?"
+_LEX_UNRELATED = "explain quantum tunneling in semiconductors"
+
+
+def _lexical_config(**overrides: Any) -> Config:
+    """T3 on the lexical backend, no local model configured at all."""
+    params = {"backend": "lexical", "similarity_threshold": _LEX_THRESHOLD}
+    params.update(overrides)
+    return Config(
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
+        local=None,
+        tactics=TacticsConfig(t3_sem_cache=True, params={"t3_sem_cache": params}),
+    )
+
+
+class TestLexicalCacheStore:
+    def test_store_and_lookup_exact_hit(self) -> None:
+        store = _lexical_store()
+        store.store_text(cache_text=_LEX_Q, response="paris", model="cloud-m", finish_reason="stop")
+        entry = store.lookup_text(_LEX_Q, threshold=_LEX_THRESHOLD)
+        assert entry is not None
+        assert entry.response == "paris"
+        assert entry.similarity == 1.0
+        assert entry.model == "cloud-m"
+        store.close()
+
+    def test_lookup_near_paraphrase_above_threshold(self) -> None:
+        store = _lexical_store()
+        store.store_text(cache_text=_LEX_Q, response="paris", model="cloud-m", finish_reason="stop")
+        entry = store.lookup_text(_LEX_PARAPHRASE, threshold=_LEX_THRESHOLD)
+        assert entry is not None
+        assert entry.response == "paris"
+        assert entry.similarity >= _LEX_THRESHOLD
+        store.close()
+
+    def test_lookup_miss_unrelated_text(self) -> None:
+        store = _lexical_store()
+        store.store_text(cache_text=_LEX_Q, response="paris", model="cloud-m", finish_reason="stop")
+        assert store.lookup_text(_LEX_UNRELATED, threshold=_LEX_THRESHOLD) is None
+        store.close()
+
+    def test_lookup_miss_empty_cache(self) -> None:
+        store = _lexical_store()
+        assert store.lookup_text(_LEX_Q) is None
+        store.close()
+
+    def test_ttl_expiry(self) -> None:
+        store = _lexical_store()
+        store.store_text(cache_text=_LEX_Q, response="r", model="m", finish_reason="stop")
+        assert store.lookup_text(_LEX_Q, ttl=99999) is not None
+        assert store.lookup_text(_LEX_Q, ttl=0) is None
+        store.close()
+
+    def test_evict_expired_and_size(self) -> None:
+        store = _lexical_store()
+        assert store.size == 0
+        store.store_text(cache_text=_LEX_Q, response="r", model="m", finish_reason="stop")
+        store.store_text(cache_text=_LEX_UNRELATED, response="r2", model="m", finish_reason="stop")
+        assert store.size == 2
+        assert store.evict_expired(ttl=0) == 2
+        assert store.size == 0
+        store.close()
+
+    def test_namespace_scoping(self) -> None:
+        drop_cache_tables()
+        a = LexicalCacheStore(TEST_DB_URL, namespace="ns-a")
+        b = LexicalCacheStore(TEST_DB_URL, namespace="ns-b")
+        a.store_text(cache_text=_LEX_Q, response="from-a", model="m", finish_reason="stop")
+        # Same text, different namespace: must miss.
+        assert b.lookup_text(_LEX_Q, threshold=0.99) is None
+        assert a.lookup_text(_LEX_Q, threshold=0.99) is not None
+        assert a.size == 1
+        assert b.size == 0
+        a.close()
+        b.close()
+
+    def test_vector_rows_never_match_lexical_lookup(self) -> None:
+        """A vector-backend row (cache_text NULL) is invisible to trigram lookup."""
+        drop_cache_tables()
+        vec = CacheStore(TEST_DB_URL, embed_dim=EMBED_DIM)
+        vec.store(_vec(1.0), response="vector answer", model="m", finish_reason="stop")
+        vec.close()
+        lex = LexicalCacheStore(TEST_DB_URL)
+        assert lex.size == 1  # row exists in the shared table
+        assert lex.lookup_text(_LEX_Q, threshold=0.01) is None  # but never matches
+        lex.close()
+
+    def test_degraded_without_trgm_fails_open(self, monkeypatch: Any) -> None:
+        """pg_trgm unavailable ⇒ inert store, mirroring has_vec fail-open.
+
+        The test DB ships pg_trgm, so the constructor-level degradation
+        is simulated by disabling the provisioning step — exactly the
+        state a DB without the contrib extension produces.
+        """
+        monkeypatch.setattr(LexicalCacheStore, "_try_load_trgm", lambda self: None)
+        store = LexicalCacheStore(TEST_DB_URL, namespace="degraded")
+        assert store.has_trgm is False
+        assert (
+            store.store_text(cache_text=_LEX_Q, response="r", model="m", finish_reason="stop") == 0
+        )
+        assert store.lookup_text(_LEX_Q) is None
+        store.close()
+
+    def test_coexists_with_vector_backend_regardless_of_who_initiates(self) -> None:
+        """Both backends share one table whichever opened the DB first.
+
+        v2 must leave the schema usable by the lexical backend even when
+        a vector store recorded the migrations first (regression: v2
+        used to skip its column when opened without pg_trgm).
+        """
+        drop_cache_tables()
+        vec = CacheStore(TEST_DB_URL, embed_dim=EMBED_DIM)
+        vec.store(_vec(1.0), response="vector answer", model="m", finish_reason="stop")
+        vec.close()
+
+        lex = LexicalCacheStore(TEST_DB_URL)
+        assert (
+            lex.store_text(cache_text=_LEX_Q, response="paris", model="m", finish_reason="stop") > 0
+        )
+        assert lex.lookup_text(_LEX_Q, threshold=_LEX_THRESHOLD) is not None
+        lex.close()
+
+        # And the vector side still works against the shared table.
+        vec2 = CacheStore(TEST_DB_URL, embed_dim=EMBED_DIM)
+        assert vec2.lookup(_vec(1.0), threshold=0.9) is not None
+        vec2.close()
+
+
+async def test_pipeline_lexical_no_local_miss_then_hit() -> None:
+    """The no-local decoupling proof: Pipeline has *no local client* and
+    the lexical cache still serves repeats — the whole point of
+    configs/proxy/no-local.yaml."""
+    cloud = FakeChatClient(
+        chat_model="cloud-m",
+        reply_content="cloud answer",
+        usage=Usage(input_tokens=50, output_tokens=10),
+    )
+    store = _lexical_store()
+    pipeline = Pipeline(
+        cloud=cloud,
+        local=None,
+        config=_lexical_config(),
+        cache_store=store,
+    )
+    assert pipeline.local is None
+
+    # First request: miss → cloud → store.
+    resp1 = await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": _LEX_Q}]))
+    assert resp1.served_by == "cloud"
+    stages = [e.stage for e in resp1.trace]
+    assert "t3_cache_lookup" in stages
+    assert "cloud_call" in stages
+    assert "t3_cache_store" in stages
+
+    # Exact repeat: cache hit, cloud never called again.
+    resp2 = await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": _LEX_Q}]))
+    assert resp2.served_by == "cache"
+    assert resp2.content == "cloud answer"
+    assert resp2.trace[0].decision == "HIT"
+
+    # Near-paraphrase above the trigram threshold: also a hit.
+    resp3 = await pipeline.complete(
+        PipelineRequest(messages=[{"role": "user", "content": _LEX_PARAPHRASE}])
+    )
+    assert resp3.served_by == "cache"
+    assert resp3.content == "cloud answer"
+
+    assert len(cloud.calls) == 1
+    store.close()
+
+
+async def test_pipeline_lexical_unrelated_queries_miss() -> None:
+    """Below-threshold text still reaches the cloud (and gets stored)."""
+    cloud = FakeChatClient(chat_model="cloud-m", reply_content="cloud answer")
+    store = _lexical_store()
+    pipeline = Pipeline(
+        cloud=cloud,
+        local=None,
+        config=_lexical_config(),
+        cache_store=store,
+    )
+
+    resp1 = await pipeline.complete(PipelineRequest(messages=[{"role": "user", "content": _LEX_Q}]))
+    resp2 = await pipeline.complete(
+        PipelineRequest(messages=[{"role": "user", "content": _LEX_UNRELATED}])
+    )
+    assert resp1.served_by == "cloud"
+    assert resp2.served_by == "cloud"
+    assert len(cloud.calls) == 2
+    assert store.size == 2
+    store.close()
+
+
+async def test_pipeline_embedding_backend_without_local_stays_inactive() -> None:
+    """Regression guard: a vector cache store without a local client must
+    NOT activate T3 (it would AttributeError on the embed call); the
+    lexical gate exemption applies to the lexical store only."""
+    cloud = FakeChatClient(chat_model="cloud-m", reply_content="direct")
+    store = _store()  # embedding backend
+    pipeline = Pipeline(
+        cloud=cloud,
+        local=None,
+        config=_config(),  # embedding backend params
+        cache_store=store,
+    )
+    resp = await pipeline.complete(PipelineRequest(messages=_MSGS))
+    assert resp.served_by == "cloud"
+    assert not any(e.stage.startswith("t3_") for e in resp.trace)
+    store.close()
+
+
+def test_build_pipeline_lexical_config_without_local_section() -> None:
+    """The cli seam: a no-local config with backend=lexical constructs a
+    LexicalCacheStore (the embedding config would create nothing)."""
+    from local_splitter.cli import _build_pipeline
+
+    drop_cache_tables()
+    config = _lexical_config()
+    pipeline = _build_pipeline(config, TEST_DB_URL)
+    try:
+        assert pipeline.local is None
+        assert isinstance(pipeline.cache_store, LexicalCacheStore)
+        assert pipeline.cache_store.has_trgm is True
+    finally:
+        if pipeline.cache_store is not None:
+            pipeline.cache_store.close()
+
+
+def test_build_pipeline_embedding_config_without_embedder_creates_no_store() -> None:
+    """Unchanged embedding-backend behavior: no local embed_model ⇒ no
+    cache store (the coupling the lexical backend bypasses)."""
+    from local_splitter.cli import _build_pipeline
+
+    config = Config(
+        cloud=ModelConfig(backend="openai_compat", endpoint="http://cloud", chat_model="cloud-m"),
+        local=ModelConfig(
+            backend="ollama", endpoint="http://local", chat_model="local-m"
+        ),  # no embed_model
+        tactics=TacticsConfig(t3_sem_cache=True, params={"t3_sem_cache": {}}),
+    )
+    pipeline = _build_pipeline(config, TEST_DB_URL)
+    assert pipeline.cache_store is None

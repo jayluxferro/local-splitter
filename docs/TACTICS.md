@@ -166,6 +166,39 @@ work"). Across sessions, users often return to the same questions.
 Semantic caching catches near-duplicates that exact-string caching
 misses.
 
+### Backends (`t3_sem_cache.backend`)
+
+Two backends share one `cache_entry` table in Postgres; the store
+object chosen at startup decides the code path (`pipeline/sem_cache.py`):
+
+- **`embedding`** (default) — the original pgvector cosine backend.
+  Every lookup embeds the request via the local model
+  (`nomic-embed-text`), so it *requires* the `local:` config section.
+- **`lexical`** — `pg_trgm` trigram `similarity()` over the raw cache
+  text plus a GIN trgm index. **No local model at all**: this is what
+  keeps the cache alive in the no-local mode
+  (`configs/proxy/no-local.yaml`), where the `local:` section is
+  omitted and T1/T2/T4 switch off structurally.
+
+Coexistence: lexical rows leave `embedding` NULL, vector rows leave
+`cache_text` NULL (migration v2 adds the column unconditionally), so
+both backends can be switched without any migration of cached data.
+Degradation is fail-open in both: no pgvector → the vector store is
+inert; no pg_trgm → the lexical store is inert (lookups miss, stores
+no-op). One wrinkle: the *table* is created by v1, which needs the
+server-side `vector` type even for lexical deployments — a Postgres
+with pg_trgm but no vector files leaves the lexical store inert too.
+
+Thresholds are not comparable across backends: trigram similarity
+reads far lower than cosine (cosine 0.95 ≈ trigram 0.65). Measured on
+the bench set (`uv run python tools/bench_sem_cache.py`, nomic-embed-text
+vs pg_trgm): exact repeats 10/10 on both, but aggressive paraphrases
+hit 4/10 at cosine 0.92 vs 2/10 at trigram 0.65 — trigram is literal,
+so word-order rewrites ("Summarize the tradeoffs…" → "What are the pros
+and cons…") fall below. Lexical lookup is ~90x faster in the same run
+(≈0.2 ms vs ≈19 ms mean, the embed call dominates) and makes zero
+local-model calls.
+
 ### How to implement
 
 Stack: `postgres` + `pgvector` (cosine `<=>` KNN) for the vector store,

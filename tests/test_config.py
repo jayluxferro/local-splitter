@@ -103,6 +103,47 @@ def test_bad_backend_raises() -> None:
         Config.from_dict(bad)
 
 
+def test_t3_backend_lexical_parses() -> None:
+    data = {
+        "models": VALID_MIN["models"],
+        "pipeline": {
+            "t3_sem_cache": {
+                "enabled": True,
+                "backend": "lexical",
+                "similarity_threshold": 0.65,
+            }
+        },
+    }
+    c = Config.from_dict(data)
+    assert c.tactics.t3_sem_cache is True
+    assert c.tactics.params["t3_sem_cache"] == {
+        "backend": "lexical",
+        "similarity_threshold": 0.65,
+    }
+
+
+def test_t3_backend_unknown_raises_at_load() -> None:
+    """A typo'd backend must fail loudly, not silently fall back to the
+    embedding backend (which with no local section would disable the
+    cache entirely)."""
+    data = {
+        "models": VALID_MIN["models"],
+        "pipeline": {"t3_sem_cache": {"enabled": True, "backend": "trigram"}},
+    }
+    with pytest.raises(ConfigError, match="backend"):
+        Config.from_dict(data)
+
+
+def test_t3_backend_defaults_to_embedding() -> None:
+    c = Config.from_dict(
+        {
+            "models": VALID_MIN["models"],
+            "pipeline": {"t3_sem_cache": {"enabled": True, "similarity_threshold": 0.92}},
+        }
+    )
+    assert "backend" not in c.tactics.params["t3_sem_cache"]
+
+
 def test_missing_required_model_field() -> None:
     bad = {
         "models": {

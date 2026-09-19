@@ -22,7 +22,7 @@ from pathlib import Path
 import typer
 
 from local_splitter import __version__
-from local_splitter.config import Config, ConfigError, load_config
+from local_splitter.config import Config, ConfigError, DEFAULT_T3_CACHE_BACKEND, load_config
 from local_splitter.models import build_chat_client
 from local_splitter.pipeline import Pipeline
 
@@ -83,15 +83,21 @@ def _build_pipeline(config: Config, cache_db_url: str) -> Pipeline:
     cloud = build_chat_client(config.cloud) if config.cloud is not None else None
     local = build_chat_client(config.local) if config.local is not None else None
     cache_store = None
-    if (
-        config.tactics.t3_sem_cache
-        and local is not None
-        and config.local is not None
-        and config.local.embed_model
-    ):
-        from local_splitter.pipeline.sem_cache import CacheStore
+    if config.tactics.t3_sem_cache:
+        from local_splitter.pipeline.sem_cache import CacheStore, LexicalCacheStore
 
-        cache_store = CacheStore(cache_db_url, embed_dim=768)
+        t3_params = config.tactics.params.get("t3_sem_cache") or {}
+        backend = str(t3_params.get("backend", DEFAULT_T3_CACHE_BACKEND))
+        # The embedding backend needs a local embedder (unchanged
+        # behavior); the lexical backend needs none — that's the point
+        # of the no-local mode.  config.py already validated the value.
+        lexical = backend == "lexical"
+        has_embedder = config.local is not None and config.local.embed_model
+        if lexical or has_embedder:
+            if lexical:
+                cache_store = LexicalCacheStore(cache_db_url)
+            else:
+                cache_store = CacheStore(cache_db_url, embed_dim=768)
     return Pipeline(cloud=cloud, local=local, config=config, cache_store=cache_store)
 
 
@@ -345,19 +351,25 @@ def eval_cmd(
 
         typer.echo(f"\n--- {wl_path.stem}: {len(samples)} samples ---")
 
-        # Build a cache store for T3 if needed.
+        # Build a cache store for T3 if needed.  Backend follows the
+        # config: lexical stores (no-local preset) need no embedder, so
+        # `local-splitter eval` works there too.
         cache_store = None
         if config.tactics.t3_sem_cache or (
             chosen and any(tc.t3_sem_cache for tc in (chosen or TACTIC_SUBSETS).values())
         ):
-            from local_splitter.pipeline.sem_cache import CacheStore
+            from local_splitter.pipeline.sem_cache import CacheStore, LexicalCacheStore
 
-            embed_dim = 768  # nomic-embed-text default
-            cache_store = CacheStore(
-                cache_db_url or _cache_db_default(),
-                embed_dim=embed_dim,
+            t3_params = config.tactics.params.get("t3_sem_cache") or {}
+            backend = str(t3_params.get("backend", DEFAULT_T3_CACHE_BACKEND))
+            common = dict(
+                dsn=cache_db_url or _cache_db_default(),
                 namespace=f"cache_{wl_path.stem}",
             )
+            if backend == "lexical":
+                cache_store = LexicalCacheStore(**common)
+            else:
+                cache_store = CacheStore(**common, embed_dim=768)  # nomic-embed-text default
 
         async def _run():
             return await run_matrix(

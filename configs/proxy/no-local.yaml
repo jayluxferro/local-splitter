@@ -1,0 +1,42 @@
+# No local LLM — cloud-only with a lexical (trigram) semantic cache
+#
+# The whole splitter runs with zero ollama dependency: no local section
+# means T1 (route), T2 (compress), and T4 (draft) are structurally off,
+# and T3 runs on the pg_trgm lexical backend — trigram similarity over
+# the raw cache text instead of pgvector cosine over local embeddings —
+# so the cache keeps working without an embedder.
+#
+# Use case: a machine (or container budget) that can't host a local
+# model but still sees repeated queries.  In the manifold chain,
+# strata/downstream services own compression; this preset only caches.
+#
+# Threshold note: trigram similarity reads lower than embedding cosine —
+# roughly, cosine 0.95 ≈ trigram 0.65 — so pair this backend with a
+# lower threshold.  Raise it if you see wrong-answer hits; lower it if
+# repeats are missing.
+#
+# Requirements: the cache Postgres (LOCAL_SPLITTER_DB_URL) needs the
+# pgvector and pg_trgm extensions; lookups/stores fail open (cache miss)
+# if either is missing.
+
+version: 1
+
+models:
+  cloud:
+    backend: anthropic
+    endpoint: http://127.0.0.1:8765
+    chat_model: claude-sonnet-4-20250514
+
+pipeline:
+  tools_require_cloud: true
+  t1_route:      { enabled: false }
+  t2_compress:   { enabled: false }
+  t3_sem_cache:
+    enabled: true
+    backend: lexical
+    similarity_threshold: 0.65
+    ttl: 86400
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }
