@@ -1,0 +1,45 @@
+# No local LLM, OpenAI-compatible cloud — the doublewordai-chain variant
+#
+# Mirror of no-local.yaml for chains whose cloud hop speaks the
+# OpenAI-compatible wire format: the cloud backend is openai_compat with a
+# /v1 endpoint (see the repo-root config-openai.yaml, which this cloud block
+# matches exactly), instead of no-local.yaml's anthropic backend.  Everything
+# else is identical: zero ollama dependency — no local section means T1
+# (route), T2 (compress), and T4 (draft) are structurally off, and T3 runs
+# on the pg_trgm lexical backend so the cache keeps working without an
+# embedder.
+#
+# Why no api_key_env: in the manifold chain this service sits mid-chain and
+# the caller's auth headers flow through to the upstream hop; an env-sourced
+# key is only needed when talking to the cloud API directly.
+#
+# Threshold note (unchanged from no-local.yaml): trigram similarity reads
+# lower than embedding cosine — roughly, cosine 0.95 ≈ trigram 0.65 — so pair
+# this backend with the lower threshold.  Raise it if you see wrong-answer
+# hits; lower it if repeats are missing.
+#
+# Requirements: the cache Postgres (LOCAL_SPLITTER_DB_URL) needs pg_trgm
+# (pgvector is not used by the lexical backend); lookups/stores fail open
+# (cache miss) if the extension is missing.
+
+version: 1
+
+models:
+  cloud:
+    backend: openai_compat
+    endpoint: http://127.0.0.1:8765/v1
+    chat_model: claude-sonnet-4-20250514
+
+pipeline:
+  tools_require_cloud: true
+  t1_route:      { enabled: false }
+  t2_compress:   { enabled: false }
+  t3_sem_cache:
+    enabled: true
+    backend: lexical
+    similarity_threshold: 0.65
+    ttl: 86400
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }

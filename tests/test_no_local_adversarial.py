@@ -237,6 +237,40 @@ def test_no_local_preset_loads_and_builds_lexical_pipeline():
             pipeline.cache_store.close()
 
 
+def test_no_local_openai_preset_loads_as_openai_compat_mirror():
+    """The doublewordai-chain variant: identical no-local shape, but the cloud
+    hop speaks the OpenAI-compatible wire format (openai_compat + /v1), the
+    exact cloud block of the repo-root config-openai.yaml.  Loader-only — no
+    DB needed to prove the preset parses and stays structurally no-local."""
+    preset = Path(__file__).resolve().parents[1] / "configs" / "proxy" / "no-local-openai.yaml"
+    config = load_config(preset)
+
+    assert config.local is None  # structurally no local model, like no-local
+    cloud = config.cloud
+    assert cloud is not None and cloud.backend == "openai_compat"
+    assert cloud.endpoint == "http://127.0.0.1:8765/v1"
+    assert cloud.chat_model == "claude-sonnet-4-20250514"
+    assert cloud.api_key_env is None  # auth flows via chain headers, not env
+
+    tactics = config.tactics
+    assert tactics.t3_sem_cache is True
+    assert not any(
+        (
+            tactics.t1_route,
+            tactics.t2_compress,
+            tactics.t4_draft,
+            tactics.t5_diff,
+            tactics.t6_intent,
+            tactics.t7_batch,
+        ),
+    )
+    params = config.tactics.params["t3_sem_cache"]
+    assert params["backend"] == "lexical"
+    assert params["similarity_threshold"] == 0.65
+    assert params["ttl"] == 86400
+    assert config.tactics.tools_require_cloud is True
+
+
 # ---------------------------------------------------------------------------
 # Pipeline-level interplay
 # ---------------------------------------------------------------------------
