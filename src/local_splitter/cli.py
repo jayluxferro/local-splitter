@@ -79,6 +79,20 @@ def _load(config_path: Path | None) -> Config:
         raise typer.Exit(code=2) from e
 
 
+def _build_pipeline_or_exit(config: Config, cache_db_url: str) -> Pipeline:
+    """_build_pipeline with the CLI's ConfigError surface.
+
+    _load() already converts ConfigError into a clean one-line error +
+    exit 2; without this wrapper the builder's errors (e.g. lexical T3
+    with no cloud backend) reached the user as a full traceback + exit 1.
+    """
+    try:
+        return _build_pipeline(config, cache_db_url)
+    except ConfigError as exc:
+        typer.secho(f"config error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+
 def _build_pipeline(config: Config, cache_db_url: str) -> Pipeline:
     cloud = build_chat_client(config.cloud) if config.cloud is not None else None
     local = build_chat_client(config.local) if config.local is not None else None
@@ -145,7 +159,7 @@ def serve_http(
     config = _load(config_path)
     if upstream and config.cloud:
         config = replace(config, cloud=replace(config.cloud, endpoint=upstream))
-    pipeline = _build_pipeline(config, cache_db_url=cache_db_url or _cache_db_default())
+    pipeline = _build_pipeline_or_exit(config, cache_db_url=cache_db_url or _cache_db_default())
 
     # Late import to keep CLI import cheap.
     from local_splitter.transport import create_app
@@ -178,7 +192,7 @@ def serve_mcp(
     """Run the MCP stdio server."""
     logging.basicConfig(level=log_level.upper())
     config = _load(config_path)
-    pipeline = _build_pipeline(config, cache_db_url=_cache_db_default())
+    pipeline = _build_pipeline_or_exit(config, cache_db_url=_cache_db_default())
 
     from local_splitter.transport import create_mcp_server
 
@@ -222,7 +236,7 @@ def transform_cmd(
     """
     logging.basicConfig(level=log_level.upper())
     config = _load(config_path)
-    pipeline = _build_pipeline(config, cache_db_url=_cache_db_default())
+    pipeline = _build_pipeline_or_exit(config, cache_db_url=_cache_db_default())
 
     # Read input.
     if prompt is not None:

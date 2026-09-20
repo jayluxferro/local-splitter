@@ -77,3 +77,41 @@ def test_cloudless_lexical_t3_fails_loudly_not_crashing(tmp_path):
     cfg = replace(load_config(str(preset)), cloud=None)
     with pytest.raises(ConfigError, match="cloud"):
         _build_pipeline(cfg, "postgresql://x/y")
+
+
+def test_cloudless_lexical_cli_is_a_clean_error_not_a_traceback(tmp_path, capsys):
+    """The builder raised ConfigError since e83c109, but the CLI showed a
+    full traceback + exit 1 — _build_pipeline sat outside _load's
+    ConfigError wrapper.  The surface must match every other config
+    error: one red line, exit 2."""
+    import subprocess
+    import sys
+
+    cfg = tmp_path / "no-cloud.yaml"
+    cfg.write_text(
+        "models:\n"
+        "  local:\n"
+        "    backend: ollama\n"
+        "    endpoint: http://127.0.0.1:11434\n"
+        "    chat_model: llama3.2\n"
+        "pipeline:\n"
+        "  t3_sem_cache:\n"
+        "    enabled: true\n"
+        "    backend: lexical\n"
+    )
+    import pathlib
+    import shutil
+
+    exe = shutil.which("local-splitter") or str(
+        pathlib.Path(sys.executable).parent / "local-splitter"
+    )
+    proc = subprocess.run(
+        [exe, "serve-http", "-c", str(cfg)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "config error:" in (proc.stderr + proc.stdout)
+    assert "cloud" in (proc.stderr + proc.stdout)
+    assert "Traceback" not in (proc.stderr + proc.stdout)
