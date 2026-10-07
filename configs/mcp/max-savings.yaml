@@ -5,8 +5,8 @@
 # T3 catches near-duplicate prompts and returns cached responses
 # without any model call.
 #
-# Requires nomic-embed-text model for embeddings:
-#   ollama pull nomic-embed-text
+# Requires embeddinggemma-2:740m for embeddings:
+#   ollama pull embeddinggemma-2:740m
 #
 # How it works with your agent:
 #   1. Agent calls split.transform with a prompt
@@ -31,7 +31,7 @@ models:
     backend: ollama
     endpoint: http://127.0.0.1:11434
     chat_model: llama3.2:3b
-    embed_model: nomic-embed-text
+    embed_model: embeddinggemma-2:740m
     num_ctx: 8192
 
 pipeline:

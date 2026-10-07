@@ -400,7 +400,7 @@ def eval_cmd(
             if backend == "lexical":
                 cache_store = LexicalCacheStore(**common)
             else:
-                cache_store = CacheStore(**common, embed_dim=768)  # nomic-embed-text default
+                cache_store = CacheStore(**common, embed_dim=768)  # embeddinggemma-2:740m (768-dim)
 
         async def _run():
             return await run_matrix(
@@ -442,7 +442,7 @@ def demo_command() -> None:
     """Print a concise first-run checklist (install, models, config, tests)."""
     typer.echo("local-splitter — quick checklist\n")
     typer.echo("  1. uv sync")
-    typer.echo("  2. ollama pull llama3.2:3b && ollama pull nomic-embed-text")
+    typer.echo("  2. ollama pull llama3.2:3b && ollama pull embeddinggemma-2:740m")
     typer.echo("  3. cp config.example.yaml config.yaml  # set cloud endpoint + api_key_env")
     typer.echo("  4. uv run pytest -q")
     typer.echo("  5. uv run local-splitter serve-http --config config.yaml")

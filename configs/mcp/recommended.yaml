@@ -27,7 +27,7 @@ models:
     backend: ollama
     endpoint: http://127.0.0.1:11434
     chat_model: llama3.2:3b
-    embed_model: nomic-embed-text
+    embed_model: embeddinggemma-2:740m
     num_ctx: 8192
 
 pipeline:
