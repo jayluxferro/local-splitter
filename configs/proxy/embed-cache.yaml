@@ -1,0 +1,53 @@
+# Embedding semantic cache — cloud-only compression, embedding T3
+#
+# The embedding-cache variant of no-local.yaml: T1 (route), T2 (compress),
+# and T4 (draft) stay structurally off (strata/downstream services own
+# compression in the manifold chain), and T3 runs on the pgvector
+# embedding backend — cosine over embeddinggemma-2:740m instead of
+# pg_trgm trigram similarity.
+#
+# Why embeddings here: this is the one measured case where they win —
+# on paraphrased repeats, embedding cosine recalled 0.40 vs trigram 0.20
+# (exact repeats tie at 1.00).  A cache miss only costs a cloud call,
+# never correctness; a wrong-answer hit would, so keep the threshold high.
+#
+# Threshold note: 0.95 cosine (the original embedding backend default).
+# Raise it if you see wrong-answer hits; lower it (0.90 floor) if
+# paraphrases are missing.
+#
+# The local section exists for the embedder only: chat_model is never
+# called because T1/T2/T4 are disabled below.
+#
+# Requirements: the cache Postgres (LOCAL_SPLITTER_DB_URL) needs pgvector;
+# ollama needs embeddinggemma-2:740m pulled and ollama >= 0.40.0 (earlier
+# builds 500 on /api/embed for this model).  Lookups/stores fail open
+# (cache miss) if either is missing.
+
+version: 1
+
+models:
+  local:
+    backend: ollama
+    endpoint: http://127.0.0.1:11434
+    chat_model: llama3.2:3b  # unused — T1/T2/T4 disabled
+    embed_model: embeddinggemma-2:740m
+    num_ctx: 8192
+
+  cloud:
+    backend: anthropic
+    endpoint: http://127.0.0.1:8765
+    chat_model: claude-sonnet-4-20250514
+
+pipeline:
+  tools_require_cloud: true
+  t1_route:      { enabled: false }
+  t2_compress:   { enabled: false }
+  t3_sem_cache:
+    enabled: true
+    backend: embedding
+    similarity_threshold: 0.95
+    ttl: 86400
+  t4_draft:      { enabled: false }
+  t5_diff:       { enabled: false }
+  t6_intent:     { enabled: false }
+  t7_batch:      { enabled: false }
