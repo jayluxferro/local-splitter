@@ -25,6 +25,8 @@ from typing import Any
 
 import httpx
 
+from local_splitter.retry import iter_upstream, retry_upstream
+
 from .base import (
     ChatResponse,
     FinishReason,
@@ -176,7 +178,15 @@ class OpenAICompatClient:
             stream=False,
         )
         try:
-            resp = await self._http.post("/chat/completions", json=body)
+            # Non-streaming: nothing has been returned downstream yet, so a
+            # transient transport failure may be re-sent (bounded by
+            # LOCAL_SPLITTER_UPSTREAM_RETRIES, default 2).  A model request is
+            # safe to re-send before any response bytes are consumed.
+            resp = await retry_upstream(
+                lambda: self._http.post("/chat/completions", json=body),
+                operation="openai-compat chat",
+                logger=_log,
+            )
         except httpx.HTTPError as e:
             raise ModelBackendError(
                 f"openai-compat chat request failed: {transport_detail(e)}"
@@ -261,7 +271,9 @@ class OpenAICompatClient:
             data: [DONE]
         """
         headers = {"accept": "text/event-stream"}
-        try:
+
+        async def _once() -> AsyncIterator[StreamChunk]:
+            """One attempt: open the stream and relay chunks until it ends."""
             async with self._http.stream(
                 "POST", "/chat/completions", json=body, headers=headers
             ) as resp:
@@ -322,6 +334,17 @@ class OpenAICompatClient:
                     finish_reason=finish or "stop",
                     usage=usage,
                 )
+
+        try:
+            # A transport failure BEFORE the first chunk is re-sent (bounded);
+            # once a chunk has been yielded the stream is committed and the
+            # failure propagates as a single terminal error, never a retry.
+            async for chunk in iter_upstream(
+                _once,
+                operation="openai-compat chat stream",
+                logger=_log,
+            ):
+                yield chunk
         except httpx.HTTPError as e:
             raise ModelBackendError(
                 f"openai-compat stream request failed: {transport_detail(e)}"
@@ -343,7 +366,13 @@ class OpenAICompatClient:
 
         body = {"model": model_name, "input": list(texts)}
         try:
-            resp = await self._http.post("/embeddings", json=body)
+            # Embeddings are pure functions of the input; re-sending before the
+            # body is read cannot double-apply anything.
+            resp = await retry_upstream(
+                lambda: self._http.post("/embeddings", json=body),
+                operation="openai-compat embed",
+                logger=_log,
+            )
         except httpx.HTTPError as e:
             raise ModelBackendError(
                 f"openai-compat embed request failed: {transport_detail(e)}"

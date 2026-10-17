@@ -40,6 +40,7 @@ from local_splitter import __version__
 from local_splitter.config import Config
 from local_splitter.models import ModelBackendError
 from local_splitter.pipeline import Pipeline, PipelineError, PipelineRequest
+from local_splitter.retry import retry_upstream
 
 _log = logging.getLogger(__name__)
 
@@ -482,8 +483,15 @@ def create_app(pipeline: Pipeline, config: Config) -> FastAPI:
                 timeout=httpx.Timeout(300.0, connect=10.0),
                 headers={"user-agent": upstream_headers.get("user-agent", "")},
             ) as client:
-                resp = await client.request(
-                    request.method, url, content=raw_body, headers=upstream_headers
+                # Nothing has been forwarded yet and the full body is consumed
+                # before we return, so a transient transport failure is safe to
+                # re-send (bounded: LOCAL_SPLITTER_UPSTREAM_RETRIES, default 2).
+                resp = await retry_upstream(
+                    lambda: client.request(
+                        request.method, url, content=raw_body, headers=upstream_headers
+                    ),
+                    operation="local-splitter raw passthrough",
+                    logger=_log,
                 )
         except httpx.HTTPError as exc:
             # Connect/send failures raise httpx exceptions whose str() is
@@ -536,9 +544,16 @@ async def _transparent_proxy(
         )
 
         try:
-            resp = await client.send(
-                client.build_request("POST", url, content=body_bytes, headers=headers),
-                stream=True,
+            # Pre-commit: nothing is streamed to the client until Gate 1 below
+            # passes, so a transport failure here may be re-sent.  A fresh
+            # request per attempt keeps the request body untouched.
+            resp = await retry_upstream(
+                lambda: client.send(
+                    client.build_request("POST", url, content=body_bytes, headers=headers),
+                    stream=True,
+                ),
+                operation="local-splitter transparent proxy (stream)",
+                logger=_log,
             )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             await client.aclose()
@@ -604,7 +619,13 @@ async def _transparent_proxy(
             timeout=httpx.Timeout(300.0, connect=10.0),
             headers={"user-agent": headers.get("user-agent", "")},
         ) as client:
-            resp = await client.post(url, content=body_bytes, headers=headers)
+            # Non-streaming: the body is only returned after this completes,
+            # so no byte has been committed downstream yet — retryable.
+            resp = await retry_upstream(
+                lambda: client.post(url, content=body_bytes, headers=headers),
+                operation="local-splitter transparent proxy",
+                logger=_log,
+            )
     except (httpx.TimeoutException, httpx.ConnectError) as exc:
         return JSONResponse(
             {"error": {"type": "upstream_timeout", "message": str(exc)}},
@@ -896,9 +917,14 @@ async def _transparent_openai_proxy(
         )
 
         try:
-            resp = await client.send(
-                client.build_request("POST", url, json=body, headers=headers),
-                stream=True,
+            # Pre-commit (Gate 1 has not run yet) — safe to re-send.
+            resp = await retry_upstream(
+                lambda: client.send(
+                    client.build_request("POST", url, json=body, headers=headers),
+                    stream=True,
+                ),
+                operation="local-splitter transparent openai proxy (stream)",
+                logger=_log,
             )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             await client.aclose()
@@ -957,7 +983,12 @@ async def _transparent_openai_proxy(
         )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
-        resp = await client.post(url, json=body, headers=headers)
+        # Non-streaming: nothing returned downstream until the body is read.
+        resp = await retry_upstream(
+            lambda: client.post(url, json=body, headers=headers),
+            operation="local-splitter transparent openai proxy",
+            logger=_log,
+        )
 
     resp_headers = {
         k: v

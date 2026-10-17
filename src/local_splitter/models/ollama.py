@@ -25,6 +25,8 @@ from typing import Any
 
 import httpx
 
+from local_splitter.retry import iter_upstream, retry_upstream
+
 from .base import (
     ChatResponse,
     FinishReason,
@@ -172,7 +174,14 @@ class OllamaClient:
             stream=False,
         )
         try:
-            resp = await self._http.post("/api/chat", json=body)
+            # Non-streaming: no byte has been returned downstream yet, so a
+            # transient transport failure may be re-sent (bounded by
+            # LOCAL_SPLITTER_UPSTREAM_RETRIES, default 2).
+            resp = await retry_upstream(
+                lambda: self._http.post("/api/chat", json=body),
+                operation="ollama chat",
+                logger=_log,
+            )
         except httpx.HTTPError as e:
             raise ModelBackendError(f"ollama chat request failed: {transport_detail(e)}") from e
 
@@ -238,7 +247,8 @@ class OllamaClient:
         return self._stream_chat(body)
 
     async def _stream_chat(self, body: dict[str, Any]) -> AsyncIterator[StreamChunk]:
-        try:
+        async def _once() -> AsyncIterator[StreamChunk]:
+            """One attempt: open the stream and relay chunks until it ends."""
             async with self._http.stream("POST", "/api/chat", json=body) as resp:
                 if resp.status_code != 200:
                     text = (await resp.aread()).decode(errors="replace")
@@ -277,6 +287,16 @@ class OllamaClient:
                         usage=usage,
                     )
                     return
+
+        try:
+            # Pre-first-chunk transport failures are re-sent (bounded); once a
+            # chunk has been yielded the stream is committed and fails once.
+            async for chunk in iter_upstream(
+                _once,
+                operation="ollama chat stream",
+                logger=_log,
+            ):
+                yield chunk
         except httpx.HTTPError as e:
             raise ModelBackendError(f"ollama stream request failed: {transport_detail(e)}") from e
 
@@ -296,7 +316,13 @@ class OllamaClient:
 
         body = {"model": model_name, "input": list(texts)}
         try:
-            resp = await self._http.post("/api/embed", json=body)
+            # Embeddings are pure functions of the input; re-sending before the
+            # body is read cannot double-apply anything.
+            resp = await retry_upstream(
+                lambda: self._http.post("/api/embed", json=body),
+                operation="ollama embed",
+                logger=_log,
+            )
         except httpx.HTTPError as e:
             raise ModelBackendError(f"ollama embed request failed: {transport_detail(e)}") from e
 

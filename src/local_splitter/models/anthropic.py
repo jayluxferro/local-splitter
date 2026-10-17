@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from local_splitter.retry import iter_upstream, retry_upstream
+
 from .base import (
     ChatResponse,
     FinishReason,
@@ -186,7 +188,14 @@ class AnthropicClient:
         )
         req_headers = dict(upstream_headers) if upstream_headers else {}
         try:
-            resp = await self._http.post("/v1/messages", json=body, headers=req_headers)
+            # Non-streaming: no byte has been returned downstream yet, so a
+            # transient transport failure may be re-sent (bounded by
+            # LOCAL_SPLITTER_UPSTREAM_RETRIES, default 2).
+            resp = await retry_upstream(
+                lambda: self._http.post("/v1/messages", json=body, headers=req_headers),
+                operation="anthropic chat",
+                logger=_log,
+            )
         except httpx.HTTPError as e:
             raise ModelBackendError(f"anthropic chat request failed: {transport_detail(e)}") from e
 
@@ -276,7 +285,9 @@ class AnthropicClient:
         headers = {"accept": "text/event-stream"}
         if upstream_headers:
             headers.update(upstream_headers)
-        try:
+
+        async def _once() -> AsyncIterator[StreamChunk]:
+            """One attempt: open the stream and relay chunks until it ends."""
             async with self._http.stream(
                 "POST", "/v1/messages", json=body, headers=headers
             ) as resp:
@@ -352,6 +363,16 @@ class AnthropicClient:
                     finish_reason=finish or "stop",
                     usage=usage,
                 )
+
+        try:
+            # Pre-first-chunk transport failures are re-sent (bounded); once a
+            # chunk has been yielded the stream is committed and fails once.
+            async for chunk in iter_upstream(
+                _once,
+                operation="anthropic chat stream",
+                logger=_log,
+            ):
+                yield chunk
         except httpx.HTTPError as e:
             raise ModelBackendError(
                 f"anthropic stream request failed: {transport_detail(e)}"
