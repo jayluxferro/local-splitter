@@ -35,7 +35,6 @@ import logging
 import os
 import random
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TypeVar
 
 import anyio
 import httpx
@@ -70,7 +69,6 @@ RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     anyio.EndOfStream,
 )
 
-T = TypeVar("T")
 
 #: Indirection so tests can neutralise sleeping without touching real time.
 _sleep = asyncio.sleep
@@ -103,7 +101,7 @@ def backoff_seconds(attempt: int) -> float:
     return max(_MIN_BACKOFF_S, min(_MAX_BACKOFF_S, jittered))
 
 
-async def retry_upstream(
+async def retry_upstream[T](
     call: Callable[[], Awaitable[T]],
     *,
     operation: str,
@@ -142,7 +140,7 @@ async def retry_upstream(
             await _sleep(delay)
 
 
-async def iter_upstream(
+async def iter_upstream[T](
     stream: Callable[[], AsyncIterator[T]],
     *,
     operation: str,
